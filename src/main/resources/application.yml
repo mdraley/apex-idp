@@ -1,0 +1,66 @@
+spring:
+  application:
+    name: apex-idp
+
+  datasource:
+    url: jdbc:postgresql://localhost:5432/apex_db
+    username: apex_user
+    password: apex_password
+    driver-class-name: org.postgresql.Driver
+
+  jpa:
+    hibernate:
+      ddl-auto: update
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+        format_sql: true
+    show-sql: false
+
+  kafka:
+    bootstrap-servers: localhost:9092
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
+    consumer:
+      group-id: apex-group
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.springframework.kafka.support.serializer.JsonDeserializer
+      properties:
+        spring.json.trusted.packages: "com.apex.idp.*"
+
+  servlet:
+    multipart:
+      max-file-size: 100MB
+      max-request-size: 100MB
+
+  redis:
+    host: localhost
+    port: 6379
+
+minio:
+  endpoint: http://localhost:9000
+  access-key: apex_admin
+  secret-key: apex_password
+  bucket-name: apex-documents
+
+openai:
+  api:
+    key: ${OPENAI_API_KEY:your-api-key}
+    url: https://api.openai.com/v1
+
+jwt:
+  secret: ${JWT_SECRET:your-256-bit-secret-key-for-jwt-token-generation}
+  expiration: 86400000 # 24 hours
+
+logging:
+  level:
+    com.apex.idp: DEBUG
+    org.springframework.web: INFO
+    org.springframework.kafka: INFO
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss} - %msg%n"
+
+server:
+  port: 8080
+  timezone: America/Chicago
