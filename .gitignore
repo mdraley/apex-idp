@@ -31,6 +31,7 @@ target/
 
 # Frontend
 frontend/node_modules/
+frontend/node/
 frontend/.next/
 frontend/out/
 frontend/.env.local
