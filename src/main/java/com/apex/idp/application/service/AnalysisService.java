@@ -124,10 +124,19 @@ public class AnalysisService {
             );
 
             // Generate AI response
+            // Create conversation history list - the third parameter should be List<ChatMessage>, not Map
+            List<OpenAIService.ChatMessage> conversationHistory = List.of(
+                new OpenAIService.ChatMessage(
+                    "user", 
+                    request.getMessage(), 
+                    System.currentTimeMillis()
+                )
+            );
+
             OpenAIService.ChatResponse aiResponse = openAIService.chat(
                     request.getMessage(),
                     chatContext,
-                    Map.of("batchId", batchId, "invoiceId", Optional.ofNullable(request.getInvoiceId()).orElse(""))
+                    conversationHistory
             );
 
             // Build response DTO
@@ -195,10 +204,12 @@ public class AnalysisService {
     }
 
     private AnalysisDTO convertToDTO(Analysis analysis) {
-        // FIX: Convert Map<String, String> to Map<String, Object>
         Map<String, Object> metadata = new HashMap<>();
         if (analysis.getMetadata() != null) {
-            analysis.getMetadata().forEach(metadata::put);
+            // Safely convert the metadata map entries
+            for (Map.Entry<String, String> entry : analysis.getMetadata().entrySet()) {
+                metadata.put(entry.getKey(), entry.getValue());
+            }
         }
 
         return AnalysisDTO.builder()

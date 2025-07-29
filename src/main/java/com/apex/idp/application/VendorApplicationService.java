@@ -2,7 +2,7 @@ package com.apex.idp.application;
 
 import com.apex.idp.domain.vendor.Vendor;
 import com.apex.idp.domain.vendor.VendorRepository;
-import com.apex.idp.domain.vendor.VendorService;
+import com.apex.idp.domain.vendor.DomainVendorService;
 import com.apex.idp.domain.vendor.VendorStatus;
 import com.apex.idp.interfaces.dto.VendorDTO;
 import lombok.RequiredArgsConstructor;
@@ -18,7 +18,7 @@ import java.util.stream.Collectors;
 public class VendorApplicationService {
 
     private final VendorRepository vendorRepository;
-    private final VendorService vendorService;
+    private final DomainVendorService domainVendorService;
 
     @Transactional(readOnly = true)
     public List<VendorDTO> getAllVendors() {
@@ -45,7 +45,7 @@ public class VendorApplicationService {
     }
 
     public VendorDTO createVendor(String name, String email, String phone, String address) {
-        Vendor vendor = vendorService.createOrUpdateVendor(name, email, phone, address);
+        Vendor vendor = domainVendorService.createOrUpdateVendor(name, email, phone, address);
         return VendorDTO.from(vendor);
     }
 

@@ -90,6 +90,10 @@ public class OCRServiceImpl implements OCRService {
         log.debug("Performing OCR - fileName: {}, contentType: {}", fileName, contentType);
 
         try {
+            // Ensure input stream supports mark/reset if possible
+            if (inputStream.markSupported()) {
+                inputStream.mark(Integer.MAX_VALUE);
+            }
             // For PDFs, try local extraction first if enabled
             if (enableLocalPdfExtraction && isPdfFile(contentType)) {
                 try {
@@ -313,7 +317,6 @@ public class OCRServiceImpl implements OCRService {
             public String getFilename() {
                 return fileName;
             }
-            @Override
             public String getContentType() {
                 return contentType;
             }
@@ -337,14 +340,18 @@ public class OCRServiceImpl implements OCRService {
                 return parseOCRResponse(response.getBody());
             } else {
                 String error = "OCR API returned status: " + response.getStatusCode();
-                // Fixed: Use correct constructor parameters
-                return new OCRResult("", 0.0, "en", 0, new HashMap<>(), 0L);
+                log.error(error);
+                Map<String, Object> errorMetadata = new HashMap<>();
+                errorMetadata.put("error", error);
+                errorMetadata.put("statusCode", response.getStatusCode().toString());
+                return new OCRResult("", 0.0, "en", 0, errorMetadata, System.currentTimeMillis());
             }
 
         } catch (Exception e) {
             log.error("OCR API call failed", e);
-            // Fixed: Use correct constructor parameters
-            return new OCRResult("", 0.0, "en", 0, new HashMap<>(), 0L);
+            Map<String, Object> errorMetadata = new HashMap<>();
+            errorMetadata.put("error", e.getMessage());
+            return new OCRResult("", 0.0, "en", 0, errorMetadata, System.currentTimeMillis());
         }
     }
 
@@ -368,8 +375,10 @@ public class OCRServiceImpl implements OCRService {
 
         } catch (Exception e) {
             log.error("Failed to parse OCR response", e);
-            // Fixed: Use correct constructor parameters
-            return new OCRResult("", 0.0, "en", 0, new HashMap<>(), 0L);
+            Map<String, Object> errorMetadata = new HashMap<>();
+            errorMetadata.put("error", e.getMessage());
+            errorMetadata.put("errorType", "parsing_error");
+            return new OCRResult("", 0.0, "en", 0, errorMetadata, System.currentTimeMillis());
         }
     }
 
@@ -447,9 +456,13 @@ public class OCRServiceImpl implements OCRService {
             original.reset();
             return original;
         } else {
-            // If mark/reset not supported, we need to re-read the stream
-            // This is why we convert to byte array in most methods
-            throw new IOException("Cannot reset input stream");
+            // If mark/reset not supported, convert to ByteArrayInputStream which supports reset
+            try {
+                byte[] bytes = original.readAllBytes();
+                return new ByteArrayInputStream(bytes);
+            } catch (IOException e) {
+                throw new IOException("Failed to reset input stream", e);
+            }
         }
     }
 
@@ -463,8 +476,4 @@ public class OCRServiceImpl implements OCRService {
         }
     }
 
-    // Helper method to create OCRResult with minimal parameters (for backward compatibility)
-    private OCRResult createOCRResult(String text, double confidence, String language, int pageCount) {
-        return new OCRResult(text, confidence, language, pageCount, new HashMap<>(), System.currentTimeMillis());
-    }
 }
