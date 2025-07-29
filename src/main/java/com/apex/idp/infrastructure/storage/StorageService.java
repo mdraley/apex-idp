@@ -13,6 +13,14 @@ public interface StorageService {
 
     void delete(String bucketName, String path) throws StorageException;
 
+    /**
+     * Default implementation of delete using the default bucket
+     * This simplifies implementations that have a concept of default bucket
+     */
+    default void delete(String path) throws StorageException {
+        delete(null, path);
+    }
+
     boolean exists(String bucketName, String path) throws StorageException;
 
     class StorageException extends Exception {

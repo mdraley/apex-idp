@@ -24,8 +24,11 @@ import org.springframework.web.multipart.MultipartFile;
 import java.io.IOException;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
 
@@ -49,36 +52,43 @@ public class BatchService {
 
     /**
      * Creates a new batch and uploads documents.
+     * This method uses multiple transactions to prevent long-running transactions
+     * that might block database resources.
      */
-    @Transactional
     public BatchDTO createBatch(String name, List<MultipartFile> files) {
         log.info("Creating new batch: {} with {} files", name, files.size());
 
-        // Validate files
+        // Validate files (outside transaction)
         validateFiles(files);
 
-        // Create batch
-        Batch batch = Batch.create(generateBatchName(name));
-        batch = batchRepository.save(batch);
+        // Create initial batch in a short transaction
+        Batch batch = createInitialBatch(generateBatchName(name));
 
-        // Process and upload files
-        for (MultipartFile file : files) {
-            Document document = processFile(batch, file);
-            batch.addDocument(document);
+        try {
+            // Process and upload files (outside transaction)
+            List<Document> documents = processFiles(batch, files);
+
+            // Update batch with documents and status in another transaction
+            batch = updateBatchWithDocuments(batch.getId(), documents);
+
+            // Send event for async processing (outside transaction)
+            batchEventProducer.sendBatchCreatedEvent(batch.getId());
+
+            // Send WebSocket notification (outside transaction)
+            notificationService.notifyBatchStatusUpdate(batch.getId(), batch.getStatus().name());
+
+            log.info("Batch created successfully: {}", batch.getId());
+            return convertToDTO(batch);
+        } catch (Exception e) {
+            log.error("Error creating batch: {}", batch.getId(), e);
+            // Mark batch as failed in case of error
+            try {
+                updateBatchStatus(batch.getId(), BatchStatus.FAILED);
+            } catch (Exception ex) {
+                log.error("Failed to update batch status to FAILED: {}", batch.getId(), ex);
+            }
+            throw e;
         }
-
-        // Update batch status
-        batch.updateStatus(BatchStatus.PROCESSING);
-        batch = batchRepository.save(batch);
-
-        // Send event for async processing
-        batchEventProducer.sendBatchCreatedEvent(batch.getId());
-
-        // Send WebSocket notification
-        notificationService.notifyBatchStatusUpdate(batch.getId(), batch.getStatus().name());
-
-        log.info("Batch created successfully: {}", batch.getId());
-        return convertToDTO(batch);
     }
 
     /**
@@ -117,7 +127,7 @@ public class BatchService {
                             batch.getStatus(), status));
         }
 
-        batch.updateStatus(status);
+        batch.setStatus(status);
         batchRepository.save(batch);
 
         // Send WebSocket notification
@@ -164,6 +174,12 @@ public class BatchService {
             throw new IllegalArgumentException("No files provided");
         }
 
+        // Parse allowed file types as a set for exact matching
+        Set<String> allowedExtensions = Arrays.stream(allowedFileTypes.split(","))
+                .map(String::trim)
+                .map(String::toLowerCase)
+                .collect(Collectors.toSet());
+
         for (MultipartFile file : files) {
             // Check file size
             if (file.getSize() > maxFileSize) {
@@ -173,9 +189,9 @@ public class BatchService {
 
             // Check file type
             String extension = getFileExtension(file.getOriginalFilename());
-            if (!allowedFileTypes.contains(extension.toLowerCase())) {
+            if (!allowedExtensions.contains(extension.toLowerCase())) {
                 throw new IllegalArgumentException(
-                        "Invalid file type: " + file.getOriginalFilename());
+                        "Invalid file type: " + file.getOriginalFilename() + ". Allowed types: " + allowedFileTypes);
             }
         }
     }
@@ -189,8 +205,6 @@ public class BatchService {
             Document document = Document.create(
                     batch,
                     file.getOriginalFilename(),
-                    file.getContentType(),
-                    file.getSize(),
                     storagePath
             );
 
@@ -198,7 +212,14 @@ public class BatchService {
 
         } catch (Exception e) {
             log.error("Error processing file: {}", file.getOriginalFilename(), e);
-            throw new RuntimeException("Failed to process file", e);
+            // More specific exception handling based on the cause
+            if (e instanceof IOException) {
+                throw new RuntimeException("I/O error while processing file: " + file.getOriginalFilename(), e);
+            } else if (e instanceof IllegalArgumentException) {
+                throw new IllegalArgumentException("Invalid file data: " + file.getOriginalFilename(), e);
+            } else {
+                throw new RuntimeException("Failed to process file: " + file.getOriginalFilename(), e);
+            }
         }
     }
 
@@ -216,8 +237,8 @@ public class BatchService {
                 .build();
     }
 
-    private BatchDTO.DocumentInfo convertDocumentToDTO(Document document) {
-        return BatchDTO.DocumentInfo.builder()
+    private com.apex.idp.interfaces.dto.DocumentDTO convertDocumentToDTO(Document document) {
+        return com.apex.idp.interfaces.dto.DocumentDTO.builder()
                 .id(document.getId())
                 .fileName(document.getFileName())
                 .fileSize(document.getFileSize())
@@ -232,6 +253,9 @@ public class BatchService {
     }
 
     private String getFileExtension(String filename) {
+        if (filename == null || filename.isEmpty()) {
+            return "";
+        }
         int lastDotIndex = filename.lastIndexOf('.');
         return lastDotIndex > 0 ? filename.substring(lastDotIndex + 1) : "";
     }
@@ -244,23 +268,62 @@ public class BatchService {
             case OCR_COMPLETED -> target == BatchStatus.ANALYSIS_IN_PROGRESS || target == BatchStatus.FAILED;
             case ANALYSIS_IN_PROGRESS -> target == BatchStatus.COMPLETED || target == BatchStatus.FAILED;
             case COMPLETED, FAILED -> false; // Terminal states
+            default -> throw new IllegalArgumentException("Unknown batch status: " + current);
         };
     }
 
     private void cleanupBatchFiles(Batch batch) {
         try {
             for (Document document : batch.getDocuments()) {
-                // FIX: Use MinIOStorageService's single-parameter delete method
-                if (storageService instanceof MinIOStorageService) {
-                    ((MinIOStorageService) storageService).delete(document.getFilePath());
-                } else {
-                    // Fallback for interface method - assumes default bucket
+                try {
+                    // Use the interface method with null as default bucket
                     storageService.delete(null, document.getFilePath());
+                    log.debug("Successfully deleted file: {}", document.getFilePath());
+                } catch (StorageService.StorageException e) {
+                    log.warn("Could not delete file: {}", document.getFilePath(), e);
                 }
             }
         } catch (Exception e) {
             log.error("Error cleaning up batch files for batch: {}", batch.getId(), e);
+            // Continue with batch deletion even if file cleanup fails
         }
+            }
+
+            /**
+             * Creates the initial batch with CREATED status in a separate transaction
+             */
+            @Transactional
+            protected Batch createInitialBatch(String name) {
+        Batch batch = Batch.create(name);
+        return batchRepository.save(batch);
+                }
+
+                /**
+                 * Processes all files for a batch outside a transaction
+                 */
+                private List<Document> processFiles(Batch batch, List<MultipartFile> files) {
+        List<Document> documents = new ArrayList<>();
+        for (MultipartFile file : files) {
+            Document document = processFile(batch, file);
+            documents.add(document);
+        }
+        return documents;
+                }
+
+                /**
+                 * Updates batch with documents and changes status to PROCESSING in a separate transaction
+                 */
+                @Transactional
+                protected Batch updateBatchWithDocuments(String batchId, List<Document> documents) {
+        Batch batch = batchRepository.findById(batchId)
+                .orElseThrow(() -> new IllegalArgumentException("Batch not found: " + batchId));
+
+        for (Document document : documents) {
+            batch.addDocument(document);
+        }
+
+        batch.setStatus(BatchStatus.PROCESSING);
+        return batchRepository.save(batch);
     }
 
     // Inner class for statistics

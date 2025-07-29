@@ -134,13 +134,11 @@ public class MinIOStorageService implements StorageService {
 
     /**
      * Simplified delete method that uses the default bucket
+     * Implements the default method from StorageService interface
      */
-    public void delete(String path) {
-        try {
-            delete(null, path);
-        } catch (StorageException e) {
-            log.error("Failed to delete file: {}", path, e);
-        }
+    @Override
+    public void delete(String path) throws StorageException {
+        delete(null, path);
     }
 
     @Override

@@ -34,7 +34,7 @@ public class JwtTokenProvider {
         this.key = Keys.hmacShaKeyFor(secret.getBytes(StandardCharsets.UTF_8));
     }
 
-    public UserDetails loadUserByUsername(String username) {
+    public UserDetails getUserDetails(String username) {
         return customUserDetailsService.loadUserByUsername(username);
     }
 
@@ -58,13 +58,32 @@ public class JwtTokenProvider {
     }
 
     public Boolean validateToken(String token) {
-        try {
-            Jwts.parserBuilder().setSigningKey(key).build().parseClaimsJws(token);
-            return !isTokenExpired(token);
-        } catch (Exception e) {
-            log.error("JWT validation failed", e);
+        if (token == null) {
             return false;
         }
+
+        try {
+            // First check if the token has expired to provide more specific error logging
+            if (isTokenExpired(token)) {
+                log.info("JWT token expired");
+                return false;
+            }
+
+            // Then validate signature and structure
+            Jwts.parserBuilder().setSigningKey(key).build().parseClaimsJws(token);
+            return true;
+        } catch (io.jsonwebtoken.security.SecurityException | io.jsonwebtoken.MalformedJwtException e) {
+            log.error("Invalid JWT signature", e);
+        } catch (io.jsonwebtoken.ExpiredJwtException e) {
+            log.error("Expired JWT token", e);
+        } catch (io.jsonwebtoken.UnsupportedJwtException e) {
+            log.error("Unsupported JWT token", e);
+        } catch (IllegalArgumentException e) {
+            log.error("JWT token compact of handler are invalid", e);
+        } catch (Exception e) {
+            log.error("JWT validation failed", e);
+        }
+        return false;
     }
 
     public String getUsernameFromToken(String token) {

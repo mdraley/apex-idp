@@ -27,15 +27,13 @@ public class BatchEventProducer {
     /**
      * Sends batch created event.
      */
-    public void sendBatchCreatedEvent(Batch batch) {
+    public void sendBatchCreatedEvent(String batchId) {
         Map<String, Object> event = new HashMap<>();
-        event.put("batchId", batch.getId());
-        event.put("name", batch.getName());
-        event.put("documentCount", batch.getDocumentCount());
+        event.put("batchId", batchId);
         event.put("timestamp", LocalDateTime.now());
         event.put("eventType", "BATCH_CREATED");
 
-        sendEvent("batch.created", batch.getId(), event);
+        sendEvent("batch.created", batchId, event);
     }
 
     /**
