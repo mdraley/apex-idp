@@ -1,6 +1,7 @@
 package com.apex.idp.interfaces.rest;
 
 import com.apex.idp.application.service.AnalysisService;
+import com.apex.idp.application.service.BatchService;
 import com.apex.idp.domain.batch.Batch;
 import com.apex.idp.domain.batch.BatchStatus;
 import com.apex.idp.interfaces.dto.*;

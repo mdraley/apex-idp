@@ -1,5 +1,6 @@
 package com.apex.idp.interfaces.websocket;
 
+import com.apex.idp.application.service.BatchService;
 import com.apex.idp.domain.batch.Batch;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;

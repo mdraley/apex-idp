@@ -4,6 +4,7 @@ import com.apex.idp.domain.vendor.Vendor;
 import com.apex.idp.domain.vendor.VendorRepository;
 import com.apex.idp.domain.vendor.VendorService;
 import com.apex.idp.domain.vendor.VendorStatus;
+import com.apex.idp.interfaces.dto.VendorDTO;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;

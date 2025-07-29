@@ -2,6 +2,7 @@ package com.apex.idp.interfaces.rest;
 
 import com.apex.idp.application.VendorApplicationService;
 import com.apex.idp.interfaces.dto.CountResponseDTO;
+import com.apex.idp.interfaces.dto.VendorDTO;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;

@@ -1,6 +1,8 @@
 package com.apex.idp.infrastructure.kafka;
 
 import com.apex.idp.application.service.AnalysisService;
+import com.apex.idp.application.service.BatchService;
+import com.apex.idp.application.service.DocumentService;
 import com.apex.idp.infrastructure.websocket.WebSocketNotificationService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.Data;

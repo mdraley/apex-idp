@@ -1,6 +1,7 @@
 package com.apex.idp.application.service;
 
 import com.apex.idp.domain.vendor.VendorRepository;
+import com.apex.idp.interfaces.dto.VendorDTO;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
