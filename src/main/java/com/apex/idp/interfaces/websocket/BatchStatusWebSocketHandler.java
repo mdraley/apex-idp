@@ -2,56 +2,49 @@ package com.apex.idp.interfaces.websocket;
 
 import com.apex.idp.application.service.BatchService;
 import com.apex.idp.domain.batch.Batch;
+import com.apex.idp.domain.batch.BatchStatus;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.messaging.handler.annotation.DestinationVariable;
 import org.springframework.messaging.handler.annotation.MessageMapping;
 import org.springframework.messaging.handler.annotation.Payload;
 import org.springframework.messaging.handler.annotation.SendTo;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
+import org.springframework.messaging.simp.annotation.SendToUser;
 import org.springframework.messaging.simp.annotation.SubscribeMapping;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.security.core.Authentication;
 import org.springframework.stereotype.Controller;
-import org.springframework.web.socket.config.annotation.EnableWebSocketMessageBroker;
 
 import java.security.Principal;
 import java.time.LocalDateTime;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.stream.Collectors;
 
 /**
- * WebSocket handler for real-time batch status updates.
+ * WebSocket controller for real-time batch status updates.
  * Provides live updates on batch processing progress and notifications.
  */
+@Slf4j
 @Controller
-@EnableWebSocketMessageBroker
+@RequiredArgsConstructor
 public class BatchStatusWebSocketHandler {
-
-    private static final Logger log = LoggerFactory.getLogger(BatchStatusWebSocketHandler.class);
 
     private final SimpMessagingTemplate messagingTemplate;
     private final BatchService batchService;
     private final ObjectMapper objectMapper;
 
     // Track active subscriptions
-    private final Map<String, Set<Long>> userBatchSubscriptions = new ConcurrentHashMap<>();
-    private final Map<Long, Set<String>> batchUserSubscriptions = new ConcurrentHashMap<>();
-
-    public BatchStatusWebSocketHandler(SimpMessagingTemplate messagingTemplate,
-                                       BatchService batchService,
-                                       ObjectMapper objectMapper) {
-        this.messagingTemplate = messagingTemplate;
-        this.batchService = batchService;
-        this.objectMapper = objectMapper;
-    }
+    private final Map<String, Set<String>> userBatchSubscriptions = new ConcurrentHashMap<>();
+    private final Map<String, Set<String>> batchUserSubscriptions = new ConcurrentHashMap<>();
 
     /**
      * Handles subscription to batch status updates.
      */
     @SubscribeMapping("/batch/{batchId}/status")
-    public BatchStatusUpdate subscribeToBatchStatus(@DestinationVariable Long batchId,
+    public BatchStatusUpdate subscribeToBatchStatus(@DestinationVariable String batchId,
                                                     Principal principal) {
         log.debug("User {} subscribed to batch {} status", principal.getName(), batchId);
 
@@ -71,7 +64,7 @@ public class BatchStatusWebSocketHandler {
      * Handles unsubscription from batch status updates.
      */
     @MessageMapping("/batch/{batchId}/unsubscribe")
-    public void unsubscribeFromBatchStatus(@DestinationVariable Long batchId,
+    public void unsubscribeFromBatchStatus(@DestinationVariable String batchId,
                                            Principal principal) {
         log.debug("User {} unsubscribed from batch {} status", principal.getName(), batchId);
         untrackSubscription(principal.getName(), batchId);
@@ -81,13 +74,14 @@ public class BatchStatusWebSocketHandler {
      * Subscribes to all user's batches status updates.
      */
     @SubscribeMapping("/user/batches/status")
+    @SendToUser("/queue/batches/status")
     public UserBatchesStatus subscribeToUserBatches(Principal principal) {
         log.debug("User {} subscribed to all their batches status", principal.getName());
 
         List<BatchStatusUpdate> batchStatuses = batchService.getUserBatches(principal.getName())
                 .stream()
                 .map(this::createStatusUpdate)
-                .toList();
+                .collect(Collectors.toList());
 
         return new UserBatchesStatus(principal.getName(), batchStatuses);
     }
@@ -97,7 +91,7 @@ public class BatchStatusWebSocketHandler {
      */
     @MessageMapping("/batch/{batchId}/chat")
     @SendTo("/topic/batch/{batchId}/chat")
-    public ChatMessage handleBatchChat(@DestinationVariable Long batchId,
+    public ChatMessage handleBatchChat(@DestinationVariable String batchId,
                                        @Payload ChatMessage message,
                                        Principal principal) {
         log.debug("Chat message for batch {} from user {}", batchId, principal.getName());
@@ -105,73 +99,39 @@ public class BatchStatusWebSocketHandler {
         message.setUserId(principal.getName());
         message.setTimestamp(LocalDateTime.now());
 
-        // Process chat message if needed (e.g., save to database)
-        // ...
-
         return message;
     }
 
     /**
-     * Sends batch status update to all subscribed users.
+     * Sends batch update to specific batch subscribers.
      */
-    public void sendBatchStatusUpdate(Long batchId, String status, Integer progress,
-                                      Map<String, Object> additionalData) {
-        log.debug("Sending batch {} status update: {} ({}%)", batchId, status, progress);
+    public void sendBatchUpdate(String batchId, Map<String, Object> update) {
+        try {
+            String destination = "/topic/batch/" + batchId + "/status";
+            messagingTemplate.convertAndSend(destination, update);
 
-        BatchStatusUpdate update = new BatchStatusUpdate(batchId, status, progress, additionalData);
+            log.debug("Sent batch update to subscribers of batch: {}", batchId);
 
-        // Send to all users subscribed to this batch
-        Set<String> subscribedUsers = batchUserSubscriptions.get(batchId);
-        if (subscribedUsers != null) {
-            for (String userId : subscribedUsers) {
-                messagingTemplate.convertAndSendToUser(
-                        userId,
-                        "/queue/batch/" + batchId + "/status",
-                        update
-                );
-            }
+        } catch (Exception e) {
+            log.error("Failed to send batch update for batch: {}", batchId, e);
         }
-
-        // Also send to the general batch topic
-        messagingTemplate.convertAndSend("/topic/batch/" + batchId + "/status", update);
     }
 
     /**
-     * Sends document processing update.
+     * Sends personalized updates to specific users.
      */
-    public void sendDocumentProcessedUpdate(Long documentId, Long batchId, String status) {
-        log.debug("Sending document {} processed update for batch {}", documentId, batchId);
+    public void sendUserBatchUpdate(String userId, String batchId, BatchStatusUpdate update) {
+        try {
+            messagingTemplate.convertAndSendToUser(
+                    userId,
+                    "/queue/batch/" + batchId + "/status",
+                    update
+            );
 
-        DocumentProcessedUpdate update = new DocumentProcessedUpdate(
-                documentId, batchId, status, LocalDateTime.now()
-        );
+            log.debug("Sent batch update to user: {} for batch: {}", userId, batchId);
 
-        messagingTemplate.convertAndSend("/topic/batch/" + batchId + "/document", update);
-    }
-
-    /**
-     * Sends batch analysis complete notification.
-     */
-    public void sendBatchAnalysisComplete(Long batchId, String summary) {
-        log.debug("Sending batch {} analysis complete notification", batchId);
-
-        AnalysisCompleteNotification notification = new AnalysisCompleteNotification(
-                batchId,
-                "Analysis Complete",
-                summary,
-                LocalDateTime.now()
-        );
-
-        // Send to all subscribed users
-        Set<String> subscribedUsers = batchUserSubscriptions.get(batchId);
-        if (subscribedUsers != null) {
-            for (String userId : subscribedUsers) {
-                messagingTemplate.convertAndSendToUser(
-                        userId,
-                        "/queue/notifications",
-                        notification
-                );
-            }
+        } catch (Exception e) {
+            log.error("Failed to send user batch update", e);
         }
     }
 
@@ -185,6 +145,7 @@ public class BatchStatusWebSocketHandler {
         // Only allow admins to broadcast
         if (isAdmin(principal)) {
             notification.setTimestamp(LocalDateTime.now());
+            log.info("Broadcasting system notification from user: {}", principal.getName());
             return notification;
         }
         return null;
@@ -195,30 +156,41 @@ public class BatchStatusWebSocketHandler {
      */
     @Scheduled(fixedDelay = 30000) // Every 30 seconds
     public void sendHeartbeat() {
-        HeartbeatMessage heartbeat = new HeartbeatMessage(
-                LocalDateTime.now(),
-                "ALIVE"
-        );
-        messagingTemplate.convertAndSend("/topic/heartbeat", heartbeat);
+        try {
+            HeartbeatMessage heartbeat = new HeartbeatMessage(
+                    LocalDateTime.now(),
+                    "ALIVE",
+                    getConnectionStats()
+            );
+            messagingTemplate.convertAndSend("/topic/heartbeat", heartbeat);
+
+        } catch (Exception e) {
+            log.error("Failed to send heartbeat", e);
+        }
     }
 
     /**
      * Sends real-time dashboard statistics update.
      */
     public void sendDashboardUpdate(DashboardStats stats) {
-        log.debug("Sending dashboard statistics update");
-        messagingTemplate.convertAndSend("/topic/dashboard/stats", stats);
+        try {
+            log.debug("Sending dashboard statistics update");
+            messagingTemplate.convertAndSend("/topic/dashboard/stats", stats);
+
+        } catch (Exception e) {
+            log.error("Failed to send dashboard update", e);
+        }
     }
 
     // Helper methods
 
-    private void trackSubscription(String userId, Long batchId) {
-        userBatchSubscriptions.computeIfAbsent(userId, k -> new HashSet<>()).add(batchId);
-        batchUserSubscriptions.computeIfAbsent(batchId, k -> new HashSet<>()).add(userId);
+    private void trackSubscription(String userId, String batchId) {
+        userBatchSubscriptions.computeIfAbsent(userId, k -> ConcurrentHashMap.newKeySet()).add(batchId);
+        batchUserSubscriptions.computeIfAbsent(batchId, k -> ConcurrentHashMap.newKeySet()).add(userId);
     }
 
-    private void untrackSubscription(String userId, Long batchId) {
-        Set<Long> userBatches = userBatchSubscriptions.get(userId);
+    private void untrackSubscription(String userId, String batchId) {
+        Set<String> userBatches = userBatchSubscriptions.get(userId);
         if (userBatches != null) {
             userBatches.remove(batchId);
             if (userBatches.isEmpty()) {
@@ -238,16 +210,29 @@ public class BatchStatusWebSocketHandler {
     private BatchStatusUpdate createStatusUpdate(Batch batch) {
         Map<String, Object> additionalData = new HashMap<>();
         additionalData.put("name", batch.getName());
+        additionalData.put("description", batch.getDescription());
         additionalData.put("documentCount", batch.getDocuments().size());
         additionalData.put("processedCount", batch.getProcessedDocumentCount());
         additionalData.put("failedCount", batch.getFailedDocumentCount());
+        additionalData.put("createdAt", batch.getCreatedAt());
+
+        int progress = calculateProgress(batch);
 
         return new BatchStatusUpdate(
                 batch.getId(),
-                batch.getStatus(),
-                batch.getProcessingProgress(),
+                batch.getStatus().toString(),
+                progress,
                 additionalData
         );
+    }
+
+    private int calculateProgress(Batch batch) {
+        if (batch.getDocuments().isEmpty()) return 0;
+
+        int processed = batch.getProcessedDocumentCount();
+        int total = batch.getDocuments().size();
+
+        return Math.round((processed * 100.0f) / total);
     }
 
     private boolean isAdmin(Principal principal) {
@@ -259,16 +244,25 @@ public class BatchStatusWebSocketHandler {
         return false;
     }
 
+    private Map<String, Object> getConnectionStats() {
+        Map<String, Object> stats = new HashMap<>();
+        stats.put("activeUsers", userBatchSubscriptions.size());
+        stats.put("activeBatches", batchUserSubscriptions.size());
+        stats.put("totalSubscriptions",
+                userBatchSubscriptions.values().stream().mapToInt(Set::size).sum());
+        return stats;
+    }
+
     // Message DTOs
 
     public static class BatchStatusUpdate {
-        private final Long batchId;
+        private final String batchId;
         private final String status;
         private final Integer progress;
         private final Map<String, Object> data;
         private final LocalDateTime timestamp;
 
-        public BatchStatusUpdate(Long batchId, String status, Integer progress,
+        public BatchStatusUpdate(String batchId, String status, Integer progress,
                                  Map<String, Object> data) {
             this.batchId = batchId;
             this.status = status;
@@ -278,7 +272,7 @@ public class BatchStatusWebSocketHandler {
         }
 
         // Getters
-        public Long getBatchId() { return batchId; }
+        public String getBatchId() { return batchId; }
         public String getStatus() { return status; }
         public Integer getProgress() { return progress; }
         public Map<String, Object> getData() { return data; }
@@ -302,27 +296,6 @@ public class BatchStatusWebSocketHandler {
         public LocalDateTime getTimestamp() { return timestamp; }
     }
 
-    public static class DocumentProcessedUpdate {
-        private final Long documentId;
-        private final Long batchId;
-        private final String status;
-        private final LocalDateTime timestamp;
-
-        public DocumentProcessedUpdate(Long documentId, Long batchId, String status,
-                                       LocalDateTime timestamp) {
-            this.documentId = documentId;
-            this.batchId = batchId;
-            this.status = status;
-            this.timestamp = timestamp;
-        }
-
-        // Getters
-        public Long getDocumentId() { return documentId; }
-        public Long getBatchId() { return batchId; }
-        public String getStatus() { return status; }
-        public LocalDateTime getTimestamp() { return timestamp; }
-    }
-
     public static class ChatMessage {
         private String userId;
         private String message;
@@ -342,37 +315,22 @@ public class BatchStatusWebSocketHandler {
         public void setTimestamp(LocalDateTime timestamp) { this.timestamp = timestamp; }
     }
 
-    public static class AnalysisCompleteNotification {
-        private final Long batchId;
-        private final String title;
-        private final String message;
-        private final LocalDateTime timestamp;
-
-        public AnalysisCompleteNotification(Long batchId, String title, String message,
-                                            LocalDateTime timestamp) {
-            this.batchId = batchId;
-            this.title = title;
-            this.message = message;
-            this.timestamp = timestamp;
-        }
-
-        // Getters
-        public Long getBatchId() { return batchId; }
-        public String getTitle() { return title; }
-        public String getMessage() { return message; }
-        public LocalDateTime getTimestamp() { return timestamp; }
-    }
-
     public static class SystemNotification {
-        private String type; // "info", "warning", "error"
+        private String type;
+        private String title;
         private String message;
+        private String severity;
         private LocalDateTime timestamp;
 
         // Getters and setters
         public String getType() { return type; }
         public void setType(String type) { this.type = type; }
+        public String getTitle() { return title; }
+        public void setTitle(String title) { this.title = title; }
         public String getMessage() { return message; }
         public void setMessage(String message) { this.message = message; }
+        public String getSeverity() { return severity; }
+        public void setSeverity(String severity) { this.severity = severity; }
         public LocalDateTime getTimestamp() { return timestamp; }
         public void setTimestamp(LocalDateTime timestamp) { this.timestamp = timestamp; }
     }
@@ -380,38 +338,44 @@ public class BatchStatusWebSocketHandler {
     public static class HeartbeatMessage {
         private final LocalDateTime timestamp;
         private final String status;
+        private final Map<String, Object> stats;
 
-        public HeartbeatMessage(LocalDateTime timestamp, String status) {
+        public HeartbeatMessage(LocalDateTime timestamp, String status, Map<String, Object> stats) {
             this.timestamp = timestamp;
             this.status = status;
+            this.stats = stats;
         }
 
         // Getters
         public LocalDateTime getTimestamp() { return timestamp; }
         public String getStatus() { return status; }
+        public Map<String, Object> getStats() { return stats; }
     }
 
     public static class DashboardStats {
         private final Long totalBatches;
+        private final Long activeBatches;
         private final Long totalInvoices;
         private final Long totalVendors;
-        private final Long processingBatches;
-        private final Map<String, Object> additionalStats;
+        private final Map<String, Long> batchesByStatus;
+        private final LocalDateTime timestamp;
 
-        public DashboardStats(Long totalBatches, Long totalInvoices, Long totalVendors,
-                              Long processingBatches, Map<String, Object> additionalStats) {
+        public DashboardStats(Long totalBatches, Long activeBatches, Long totalInvoices,
+                              Long totalVendors, Map<String, Long> batchesByStatus) {
             this.totalBatches = totalBatches;
+            this.activeBatches = activeBatches;
             this.totalInvoices = totalInvoices;
             this.totalVendors = totalVendors;
-            this.processingBatches = processingBatches;
-            this.additionalStats = additionalStats;
+            this.batchesByStatus = batchesByStatus;
+            this.timestamp = LocalDateTime.now();
         }
 
         // Getters
         public Long getTotalBatches() { return totalBatches; }
+        public Long getActiveBatches() { return activeBatches; }
         public Long getTotalInvoices() { return totalInvoices; }
         public Long getTotalVendors() { return totalVendors; }
-        public Long getProcessingBatches() { return processingBatches; }
-        public Map<String, Object> getAdditionalStats() { return additionalStats; }
+        public Map<String, Long> getBatchesByStatus() { return batchesByStatus; }
+        public LocalDateTime getTimestamp() { return timestamp; }
     }
 }

@@ -1,38 +1,33 @@
 package com.apex.idp.domain.batch;
 
-import jakarta.persistence.criteria.Predicate;
 import org.springframework.data.jpa.domain.Specification;
-import org.springframework.util.StringUtils;
-
-import java.util.ArrayList;
-import java.util.List;
 
 public class BatchSpecification {
 
-    public static Specification<Batch> findByCriteria(String status, String search) {
+    public static Specification<Batch> findByCriteria(BatchStatus status, String search) {
+        return Specification.where(hasStatus(status))
+                .and(hasSearchTerm(search));
+    }
+
+    private static Specification<Batch> hasStatus(BatchStatus status) {
         return (root, query, criteriaBuilder) -> {
-            List<Predicate> predicates = new ArrayList<>();
-
-            // Add status predicate if status is provided and not empty
-            if (StringUtils.hasText(status)) {
-                try {
-                    BatchStatus batchStatus = BatchStatus.valueOf(status.toUpperCase());
-                    predicates.add(criteriaBuilder.equal(root.get("status"), batchStatus));
-                } catch (IllegalArgumentException e) {
-                    // Handle invalid status string if necessary, or ignore
-                }
+            if (status == null) {
+                return criteriaBuilder.conjunction();
             }
+            return criteriaBuilder.equal(root.get("status"), status);
+        };
+    }
 
-            // Add search predicate if search term is provided
-            if (StringUtils.hasText(search)) {
-                Predicate namePredicate = criteriaBuilder.like(criteriaBuilder.lower(root.get("name")), "%" + search.toLowerCase() + "%");
-                // In a real app, you might search description too
-                // Predicate descriptionPredicate = criteriaBuilder.like(criteriaBuilder.lower(root.get("description")), "%" + search.toLowerCase() + "%");
-                predicates.add(namePredicate);
+    private static Specification<Batch> hasSearchTerm(String search) {
+        return (root, query, criteriaBuilder) -> {
+            if (search == null || search.trim().isEmpty()) {
+                return criteriaBuilder.conjunction();
             }
-
-            // Combine predicates with AND
-            return criteriaBuilder.and(predicates.toArray(new Predicate[0]));
+            String searchPattern = "%" + search.toLowerCase() + "%";
+            return criteriaBuilder.or(
+                    criteriaBuilder.like(criteriaBuilder.lower(root.get("name")), searchPattern),
+                    criteriaBuilder.like(criteriaBuilder.lower(root.get("description")), searchPattern)
+            );
         };
     }
 }

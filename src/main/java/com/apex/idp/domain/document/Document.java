@@ -29,20 +29,32 @@ public class Document {
     @Column(name = "file_name", nullable = false)
     private String fileName;
 
-    @Column(name = "file_type", nullable = false)
-    private String fileType;
+    @Column(name = "content_type", nullable = false)
+    private String contentType;
 
     @Column(name = "file_path")
     private String filePath;
 
+    @Column(name = "file_size")
+    @Setter
+    private Long fileSize;
+
     @Enumerated(EnumType.STRING)
     @Column(nullable = false)
+    @Setter
     private DocumentStatus status;
 
     @Column(columnDefinition = "TEXT")
     private String ocrText;
 
+    @Column(name = "retry_count")
+    private int retryCount;
+
+    @Column(name = "error_message")
+    private String errorMessage;
+
     @OneToOne(mappedBy = "document", cascade = CascadeType.ALL)
+    @Setter
     private Invoice invoice;
 
     @CreationTimestamp
@@ -53,35 +65,14 @@ public class Document {
     @Column(name = "updated_at")
     private LocalDateTime updatedAt;
 
-    @Column(name = "bucket_name")
-    private String bucketName;
-
-    @Column(name = "storage_path")
-    private String storagePath;
-
-    @Column(name = "content_type")
-    private String contentType;
-
-    // Add getters
-    public String getBucketName() {
-        return bucketName != null ? bucketName : "apex-documents";
-    }
-
-    public String getStoragePath() {
-        return storagePath != null ? storagePath : filePath;
-    }
-
-    public String getContentType() {
-        return contentType != null ? contentType : fileType;
-    }
-
-    public static Document create(String fileName, String fileType, String filePath) {
+    public static Document create(String fileName, String contentType, String filePath) {
         return Document.builder()
                 .id(UUID.randomUUID().toString())
                 .fileName(fileName)
-                .fileType(fileType)
+                .contentType(contentType)
                 .filePath(filePath)
-                .status(DocumentStatus.PENDING)
+                .status(DocumentStatus.CREATED)
+                .retryCount(0)
                 .build();
     }
 
@@ -90,11 +81,32 @@ public class Document {
     }
 
     public void completeProcessing(String ocrText) {
-        this.status = DocumentStatus.COMPLETED;
+        this.status = DocumentStatus.PROCESSED;
         this.ocrText = ocrText;
     }
 
-    public void failProcessing() {
+    public void failProcessing(String errorMessage) {
         this.status = DocumentStatus.FAILED;
+        this.errorMessage = errorMessage;
+    }
+
+    public void incrementRetryCount() {
+        this.retryCount++;
+    }
+
+    public String getDocumentType() {
+        // Simple mapping based on content type
+        if (contentType != null) {
+            if (contentType.contains("pdf")) return "PDF";
+            if (contentType.contains("image")) return "IMAGE";
+        }
+        return "UNKNOWN";
+    }
+
+    public enum DocumentStatus {
+        CREATED,
+        PROCESSING,
+        PROCESSED,
+        FAILED
     }
 }

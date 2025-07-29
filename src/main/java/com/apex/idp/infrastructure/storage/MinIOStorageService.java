@@ -77,6 +77,19 @@ public class MinIOStorageService implements StorageService {
         }
     }
 
+    /**
+     * Simplified retrieve method that uses the default bucket
+     */
+    public InputStream retrieve(String storagePath) throws IOException {
+        try {
+            return retrieveDocument(null, storagePath).orElseThrow(
+                    () -> new IOException("File not found: " + storagePath)
+            );
+        } catch (StorageException e) {
+            throw new IOException("Failed to retrieve file", e);
+        }
+    }
+
     @Override
     public Optional<InputStream> retrieveDocument(String bucketName, String storagePath)
             throws StorageException {
@@ -116,6 +129,17 @@ public class MinIOStorageService implements StorageService {
 
         } catch (Exception e) {
             throw new StorageException("Failed to delete object", e);
+        }
+    }
+
+    /**
+     * Simplified delete method that uses the default bucket
+     */
+    public void delete(String path) {
+        try {
+            delete(null, path);
+        } catch (StorageException e) {
+            log.error("Failed to delete file: {}", path, e);
         }
     }
 

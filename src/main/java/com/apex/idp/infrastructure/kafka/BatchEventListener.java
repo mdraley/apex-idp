@@ -4,12 +4,11 @@ import com.apex.idp.application.service.AnalysisService;
 import com.apex.idp.application.service.BatchService;
 import com.apex.idp.application.service.DocumentService;
 import com.apex.idp.domain.batch.Batch;
-import com.apex.idp.domain.document.Document;
-import com.apex.idp.infrastructure.kafka.BatchEventProducer.*;
 import com.apex.idp.infrastructure.websocket.WebSocketNotificationService;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import lombok.Data;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.kafka.support.Acknowledgment;
 import org.springframework.kafka.support.KafkaHeaders;
@@ -18,392 +17,247 @@ import org.springframework.messaging.handler.annotation.Payload;
 import org.springframework.retry.annotation.Backoff;
 import org.springframework.retry.annotation.Retryable;
 import org.springframework.stereotype.Component;
-import org.springframework.transaction.annotation.Transactional;
 
+import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 /**
- * Kafka consumer for processing batch-related events.
- * Handles asynchronous processing of OCR completion, analysis, and status updates.
+ * Kafka listener for batch processing events.
+ * Handles asynchronous processing of batch-related events.
  */
+@Slf4j
 @Component
+@RequiredArgsConstructor
 public class BatchEventListener {
-
-    private static final Logger log = LoggerFactory.getLogger(BatchEventListener.class);
 
     private final BatchService batchService;
     private final DocumentService documentService;
     private final AnalysisService analysisService;
-    private final WebSocketNotificationService notificationService;
+    private final WebSocketNotificationService webSocketNotificationService;
     private final ObjectMapper objectMapper;
 
-    public BatchEventListener(BatchService batchService,
-                              DocumentService documentService,
-                              AnalysisService analysisService,
-                              WebSocketNotificationService notificationService,
-                              ObjectMapper objectMapper) {
-        this.batchService = batchService;
-        this.documentService = documentService;
-        this.analysisService = analysisService;
-        this.notificationService = notificationService;
-        this.objectMapper = objectMapper;
-    }
+    // Thread pool for async processing
+    private final ExecutorService executorService = Executors.newFixedThreadPool(10);
 
     /**
-     * Handles batch OCR completion events.
-     * Triggers AI analysis when OCR processing is complete.
+     * Handles batch created events.
      */
-    @KafkaListener(
-            topics = "${kafka.topics.batch-ocr-completed:batch-ocr-completed}",
-            groupId = "${kafka.consumer.group-id:apex-idp-group}",
-            containerFactory = "kafkaListenerContainerFactory"
-    )
-    @Retryable(
-            value = {Exception.class},
-            maxAttempts = 3,
-            backoff = @Backoff(delay = 1000, multiplier = 2)
-    )
-    @Transactional
-    public void handleBatchOcrCompleted(
-            @Payload String payload,
-            @Header(KafkaHeaders.RECEIVED_TOPIC) String topic,
-            @Header(KafkaHeaders.RECEIVED_PARTITION) int partition,
-            @Header(KafkaHeaders.OFFSET) long offset,
-            Acknowledgment acknowledgment) {
+    @KafkaListener(topics = "${kafka.topics.batch-created}", groupId = "${kafka.consumer.group-id}")
+    @Retryable(value = Exception.class, maxAttempts = 3, backoff = @Backoff(delay = 1000))
+    public void handleBatchCreated(@Payload String message,
+                                   @Header(KafkaHeaders.RECEIVED_TOPIC) String topic,
+                                   @Header(KafkaHeaders.RECEIVED_PARTITION) int partition,
+                                   @Header(KafkaHeaders.OFFSET) long offset,
+                                   Acknowledgment acknowledgment) {
 
-        log.info("Received BatchOcrCompleted event from topic: {}, partition: {}, offset: {}",
+        log.info("Received batch created event - topic: {}, partition: {}, offset: {}",
                 topic, partition, offset);
 
         try {
-            BatchOcrCompletedEvent event = objectMapper.readValue(payload, BatchOcrCompletedEvent.class);
-            log.info("Processing OCR completion for batch: {}", event.getBatchId());
+            BatchEvent event = objectMapper.readValue(message, BatchEvent.class);
+            log.info("Processing batch created event for batch: {}", event.getBatchId());
 
-            // Update batch status
-            Batch batch = batchService.updateBatchStatus(event.getBatchId(), "OCR_COMPLETED");
-
-            // Send real-time notification
-            notificationService.notifyBatchStatusUpdate(event.getBatchId(), "OCR_COMPLETED", Map.of(
-                    "successfulDocuments", event.getSuccessfulDocuments(),
-                    "failedDocuments", event.getFailedDocuments()
-            ));
-
-            // Trigger AI analysis if OCR was successful
-            if (event.getSuccessfulDocuments() > 0) {
-                log.info("Triggering AI analysis for batch: {}", event.getBatchId());
-                CompletableFuture.runAsync(() -> {
-                    try {
-                        analysisService.analyzeBatch(event.getBatchId());
-                    } catch (Exception e) {
-                        log.error("Failed to analyze batch: {}", event.getBatchId(), e);
-                        // Could publish an analysis failed event here
-                    }
-                });
-            }
-
-            // Acknowledge the message
-            acknowledgment.acknowledge();
-            log.info("Successfully processed BatchOcrCompleted event for batch: {}", event.getBatchId());
-
-        } catch (Exception e) {
-            log.error("Error processing BatchOcrCompleted event", e);
-            throw new EventProcessingException("Failed to process BatchOcrCompleted event", e);
-        }
-    }
-
-    /**
-     * Handles batch analysis completion events.
-     * Updates batch with analysis results and notifies users.
-     */
-    @KafkaListener(
-            topics = "${kafka.topics.batch-analysis-completed:batch-analysis-completed}",
-            groupId = "${kafka.consumer.group-id:apex-idp-group}",
-            containerFactory = "kafkaListenerContainerFactory"
-    )
-    @Retryable(
-            value = {Exception.class},
-            maxAttempts = 3,
-            backoff = @Backoff(delay = 1000, multiplier = 2)
-    )
-    @Transactional
-    public void handleBatchAnalysisCompleted(
-            @Payload String payload,
-            @Header(KafkaHeaders.RECEIVED_TOPIC) String topic,
-            @Header(KafkaHeaders.RECEIVED_PARTITION) int partition,
-            @Header(KafkaHeaders.OFFSET) long offset,
-            Acknowledgment acknowledgment) {
-
-        log.info("Received BatchAnalysisCompleted event from topic: {}, partition: {}, offset: {}",
-                topic, partition, offset);
-
-        try {
-            BatchAnalysisCompletedEvent event = objectMapper.readValue(
-                    payload, BatchAnalysisCompletedEvent.class);
-            log.info("Processing analysis completion for batch: {}", event.getBatchId());
-
-            // Update batch with analysis results
-            batchService.updateBatchAnalysis(
-                    event.getBatchId(),
-                    event.getSummary(),
-                    event.getRecommendations()
-            );
-
-            // Update batch status
-            batchService.updateBatchStatus(event.getBatchId(), "ANALYSIS_COMPLETED");
-
-            // Send real-time notification with analysis summary
-            notificationService.notifyBatchAnalysisComplete(event.getBatchId(), Map.of(
-                    "summary", truncateForNotification(event.getSummary(), 200),
-                    "hasRecommendations", !event.getRecommendations().isEmpty()
-            ));
-
-            // Acknowledge the message
-            acknowledgment.acknowledge();
-            log.info("Successfully processed BatchAnalysisCompleted event for batch: {}",
-                    event.getBatchId());
-
-        } catch (Exception e) {
-            log.error("Error processing BatchAnalysisCompleted event", e);
-            throw new EventProcessingException("Failed to process BatchAnalysisCompleted event", e);
-        }
-    }
-
-    /**
-     * Handles document processed events.
-     * Updates individual document status and extracted data.
-     */
-    @KafkaListener(
-            topics = "${kafka.topics.document-processed:document-processed}",
-            groupId = "${kafka.consumer.group-id:apex-idp-group}",
-            containerFactory = "kafkaListenerContainerFactory"
-    )
-    @Retryable(
-            value = {Exception.class},
-            maxAttempts = 3,
-            backoff = @Backoff(delay = 1000, multiplier = 2)
-    )
-    @Transactional
-    public void handleDocumentProcessed(
-            @Payload String payload,
-            @Header(KafkaHeaders.RECEIVED_TOPIC) String topic,
-            @Header(KafkaHeaders.RECEIVED_PARTITION) int partition,
-            @Header(KafkaHeaders.OFFSET) long offset,
-            Acknowledgment acknowledgment) {
-
-        log.debug("Received DocumentProcessed event from topic: {}, partition: {}, offset: {}",
-                topic, partition, offset);
-
-        try {
-            DocumentProcessedEvent event = objectMapper.readValue(payload, DocumentProcessedEvent.class);
-            log.info("Processing document completion: {} for batch: {}",
-                    event.getDocumentId(), event.getBatchId());
-
-            // Update document with extracted data
-            documentService.updateDocumentProcessingResult(
-                    event.getDocumentId(),
-                    event.getStatus(),
-                    event.getExtractedData()
-            );
-
-            // Send real-time notification for document update
-            notificationService.notifyDocumentProcessed(
-                    event.getDocumentId(),
-                    event.getBatchId(),
-                    event.getStatus()
-            );
-
-            // Check if all documents in batch are processed
-            checkBatchCompletion(event.getBatchId());
-
-            // Acknowledge the message
-            acknowledgment.acknowledge();
-            log.debug("Successfully processed DocumentProcessed event for document: {}",
-                    event.getDocumentId());
-
-        } catch (Exception e) {
-            log.error("Error processing DocumentProcessed event", e);
-            throw new EventProcessingException("Failed to process DocumentProcessed event", e);
-        }
-    }
-
-    /**
-     * Handles batch status change events.
-     * Propagates status updates to connected clients.
-     */
-    @KafkaListener(
-            topics = "${kafka.topics.batch-status-changed:batch-status-changed}",
-            groupId = "${kafka.consumer.group-id:apex-idp-group}",
-            containerFactory = "kafkaListenerContainerFactory"
-    )
-    public void handleBatchStatusChanged(
-            @Payload String payload,
-            @Header(KafkaHeaders.RECEIVED_TOPIC) String topic,
-            @Header(KafkaHeaders.RECEIVED_PARTITION) int partition,
-            @Header(KafkaHeaders.OFFSET) long offset,
-            Acknowledgment acknowledgment) {
-
-        log.debug("Received BatchStatusChanged event from topic: {}, partition: {}, offset: {}",
-                topic, partition, offset);
-
-        try {
-            BatchStatusChangedEvent event = objectMapper.readValue(
-                    payload, BatchStatusChangedEvent.class);
-            log.info("Batch {} status changed from {} to {}",
-                    event.getBatchId(), event.getOldStatus(), event.getNewStatus());
-
-            // Send real-time notification
-            notificationService.notifyBatchStatusUpdate(
-                    event.getBatchId(),
-                    event.getNewStatus(),
-                    Map.of("previousStatus", event.getOldStatus())
-            );
-
-            // Handle specific status transitions
-            handleStatusTransition(event);
-
-            // Acknowledge the message
-            acknowledgment.acknowledge();
-
-        } catch (Exception e) {
-            log.error("Error processing BatchStatusChanged event", e);
-            // Non-critical event, log error but don't throw
-        }
-    }
-
-    /**
-     * Handles batch creation events.
-     * Initiates OCR processing for newly created batches.
-     */
-    @KafkaListener(
-            topics = "${kafka.topics.batch-created:batch-created}",
-            groupId = "${kafka.consumer.group-id:apex-idp-group}",
-            containerFactory = "kafkaListenerContainerFactory"
-    )
-    @Retryable(
-            value = {Exception.class},
-            maxAttempts = 3,
-            backoff = @Backoff(delay = 1000, multiplier = 2)
-    )
-    public void handleBatchCreated(
-            @Payload String payload,
-            @Header(KafkaHeaders.RECEIVED_TOPIC) String topic,
-            @Header(KafkaHeaders.RECEIVED_PARTITION) int partition,
-            @Header(KafkaHeaders.OFFSET) long offset,
-            Acknowledgment acknowledgment) {
-
-        log.info("Received BatchCreated event from topic: {}, partition: {}, offset: {}",
-                topic, partition, offset);
-
-        try {
-            BatchCreatedEvent event = objectMapper.readValue(payload, BatchCreatedEvent.class);
-            log.info("Processing new batch: {} with {} documents",
-                    event.getBatchName(), event.getDocumentCount());
-
-            // Trigger OCR processing for the batch
+            // Process batch asynchronously
             CompletableFuture.runAsync(() -> {
                 try {
-                    batchService.processBatchOcr(event.getBatchId());
+                    processBatchDocuments(event.getBatchId());
                 } catch (Exception e) {
-                    log.error("Failed to start OCR processing for batch: {}",
-                            event.getBatchId(), e);
-                    batchService.updateBatchStatus(event.getBatchId(), "OCR_FAILED");
+                    log.error("Error processing batch: {}", event.getBatchId(), e);
                 }
-            });
+            }, executorService);
 
-            // Send real-time notification
-            notificationService.notifyBatchCreated(event.getBatchId(), Map.of(
-                    "batchName", event.getBatchName(),
-                    "documentCount", event.getDocumentCount()
-            ));
-
-            // Acknowledge the message
+            // Acknowledge message
             acknowledgment.acknowledge();
-            log.info("Successfully initiated processing for batch: {}", event.getBatchId());
 
         } catch (Exception e) {
-            log.error("Error processing BatchCreated event", e);
-            throw new EventProcessingException("Failed to process BatchCreated event", e);
+            log.error("Error handling batch created event", e);
+            throw new RuntimeException("Failed to process batch created event", e);
         }
     }
 
-    // Helper methods
-
     /**
-     * Checks if all documents in a batch have been processed.
-     * Updates batch status accordingly.
+     * Handles OCR completed events.
      */
-    private void checkBatchCompletion(Long batchId) {
+    @KafkaListener(topics = "${kafka.topics.ocr-completed}", groupId = "${kafka.consumer.group-id}")
+    public void handleOCRCompleted(@Payload String message,
+                                   @Header(KafkaHeaders.RECEIVED_TOPIC) String topic,
+                                   Acknowledgment acknowledgment) {
+
+        log.info("Received OCR completed event");
+
         try {
-            List<Document> documents = documentService.getDocumentsByBatchId(batchId);
-            boolean allProcessed = documents.stream()
-                    .allMatch(doc -> doc.getStatus().equals("PROCESSED") ||
-                            doc.getStatus().equals("FAILED"));
+            DocumentEvent event = objectMapper.readValue(message, DocumentEvent.class);
+            log.info("OCR completed for document: {}", event.getDocumentId());
 
-            if (allProcessed) {
-                long successCount = documents.stream()
-                        .filter(doc -> doc.getStatus().equals("PROCESSED"))
-                        .count();
-                long failedCount = documents.size() - successCount;
+            // Send WebSocket notification
+            webSocketNotificationService.notifyDocumentStatusUpdate(
+                    event.getDocumentId(),
+                    "OCR_COMPLETED"
+            );
 
-                log.info("All documents processed for batch {}. Success: {}, Failed: {}",
-                        batchId, successCount, failedCount);
+            // Check if batch is ready for analysis
+            checkBatchReadyForAnalysis(event.getBatchId());
 
-                // Update batch status based on results
-                String newStatus = failedCount == documents.size() ? "FAILED" : "READY_FOR_ANALYSIS";
-                batchService.updateBatchStatus(batchId, newStatus);
-            }
+            acknowledgment.acknowledge();
+
         } catch (Exception e) {
-            log.error("Error checking batch completion for batch: {}", batchId, e);
+            log.error("Error handling OCR completed event", e);
+            throw new RuntimeException("Failed to process OCR completed event", e);
         }
     }
 
     /**
-     * Handles specific status transitions that may require additional actions.
+     * Handles batch OCR completed events.
      */
-    private void handleStatusTransition(BatchStatusChangedEvent event) {
-        String newStatus = event.getNewStatus();
+    @KafkaListener(topics = "${kafka.topics.batch-ocr-completed}", groupId = "${kafka.consumer.group-id}")
+    public void handleBatchOCRCompleted(@Payload String message,
+                                        @Header(KafkaHeaders.RECEIVED_TOPIC) String topic,
+                                        Acknowledgment acknowledgment) {
 
-        switch (newStatus) {
-            case "FAILED":
-                log.warn("Batch {} has failed. May need manual intervention.", event.getBatchId());
-                // Could send alert notifications here
-                break;
+        log.info("Received batch OCR completed event");
 
-            case "COMPLETED":
-                log.info("Batch {} processing completed successfully.", event.getBatchId());
-                // Could trigger export or integration processes here
-                break;
+        try {
+            BatchEvent event = objectMapper.readValue(message, BatchEvent.class);
+            log.info("Batch OCR completed for: {}", event.getBatchId());
 
-            case "READY_FOR_EXPORT":
-                log.info("Batch {} is ready for CPSI export.", event.getBatchId());
-                // Could trigger CPSI integration here
-                break;
+            // Trigger batch analysis
+            CompletableFuture.runAsync(() -> {
+                try {
+                    analysisService.analyzeBatch(event.getBatchId());
+                } catch (Exception e) {
+                    log.error("Error analyzing batch: {}", event.getBatchId(), e);
+                }
+            }, executorService);
 
-            default:
-                log.debug("Batch {} transitioned to status: {}", event.getBatchId(), newStatus);
+            acknowledgment.acknowledge();
+
+        } catch (Exception e) {
+            log.error("Error handling batch OCR completed event", e);
+            throw new RuntimeException("Failed to process batch OCR completed event", e);
         }
     }
 
     /**
-     * Truncates text for notification purposes.
+     * Handles document processing errors.
      */
-    private String truncateForNotification(String text, int maxLength) {
-        if (text == null || text.length() <= maxLength) {
-            return text;
+    @KafkaListener(topics = "${kafka.topics.processing-error}", groupId = "${kafka.consumer.group-id}")
+    public void handleProcessingError(@Payload String message,
+                                      @Header(KafkaHeaders.RECEIVED_TOPIC) String topic,
+                                      @Header(KafkaHeaders.RECEIVED_PARTITION) int partition,
+                                      Acknowledgment acknowledgment) {
+
+        log.error("Received processing error event - topic: {}, partition: {}", topic, partition);
+
+        try {
+            ErrorEvent event = objectMapper.readValue(message, ErrorEvent.class);
+
+            // Fixed: Convert partition (int) to String for logging
+            log.error("Processing error for {} {}: {} - Partition: {}",
+                    event.getEntityType(),
+                    event.getEntityId(),
+                    event.getErrorMessage(),
+                    String.valueOf(partition)  // Fixed: Convert int to String
+            );
+
+            // Send error notification
+            webSocketNotificationService.notifyError(
+                    event.getEntityId(),
+                    event.getEntityType(),
+                    event.getErrorMessage()
+            );
+
+            // Handle retry logic
+            if (event.getRetryCount() < 3) {
+                scheduleRetry(event);
+            }
+
+            acknowledgment.acknowledge();
+
+        } catch (Exception e) {
+            log.error("Error handling processing error event", e);
+            throw new RuntimeException("Failed to process error event", e);
         }
-        return text.substring(0, maxLength - 3) + "...";
     }
 
-    /**
-     * Custom exception for event processing failures.
-     */
-    public static class EventProcessingException extends RuntimeException {
-        public EventProcessingException(String message) {
-            super(message);
-        }
+    // Private helper methods
 
-        public EventProcessingException(String message, Throwable cause) {
-            super(message, cause);
+    private void processBatchDocuments(String batchId) {
+        log.info("Processing documents for batch: {}", batchId);
+
+        try {
+            // Get batch documents
+            List<String> documentIds = batchService.getBatchDocumentIds(batchId);
+
+            // Process each document
+            for (String documentId : documentIds) {
+                try {
+                    documentService.processDocument(documentId);
+                } catch (Exception e) {
+                    log.error("Error processing document: {}", documentId, e);
+                    // Continue with other documents
+                }
+            }
+
+        } catch (Exception e) {
+            log.error("Error processing batch documents: {}", batchId, e);
         }
+    }
+
+    private void checkBatchReadyForAnalysis(String batchId) {
+        // This would check if all documents in the batch have completed OCR
+        // and trigger analysis if ready
+        log.debug("Checking if batch {} is ready for analysis", batchId);
+    }
+
+    private void scheduleRetry(ErrorEvent event) {
+        log.info("Scheduling retry for {} {}", event.getEntityType(), event.getEntityId());
+
+        // Schedule retry with exponential backoff
+        int delaySeconds = (int) Math.pow(2, event.getRetryCount()) * 10;
+
+        CompletableFuture.runAsync(() -> {
+            try {
+                Thread.sleep(delaySeconds * 1000L);
+
+                if ("DOCUMENT".equals(event.getEntityType())) {
+                    documentService.reprocessDocument(event.getEntityId());
+                }
+
+            } catch (Exception e) {
+                log.error("Error during retry", e);
+            }
+        }, executorService);
+    }
+
+    // Event classes
+
+    @Data
+    public static class BatchEvent {
+        private String batchId;
+        private String eventType;
+        private LocalDateTime timestamp;
+        private Map<String, Object> metadata;
+    }
+
+    @Data
+    public static class DocumentEvent {
+        private String documentId;
+        private String batchId;
+        private String eventType;
+        private LocalDateTime timestamp;
+        private Map<String, Object> metadata;
+    }
+
+    @Data
+    public static class ErrorEvent {
+        private String entityId;
+        private String entityType;
+        private String errorMessage;
+        private int retryCount;
+        private LocalDateTime timestamp;
     }
 }

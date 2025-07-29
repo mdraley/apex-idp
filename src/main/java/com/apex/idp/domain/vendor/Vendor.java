@@ -80,4 +80,10 @@ public class Vendor {
     public void incrementInvoiceCount() {
         this.invoiceCount++;
     }
+
+    public enum VendorStatus {
+        ACTIVE,
+        INACTIVE,
+        PENDING_VERIFICATION
+    }
 }

@@ -1,299 +1,105 @@
 package com.apex.idp.infrastructure.kafka;
 
-import com.apex.idp.domain.batch.Batch.*;
+import com.apex.idp.domain.batch.Batch;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import org.apache.kafka.clients.producer.ProducerRecord;
-import org.apache.kafka.common.header.internals.RecordHeader;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Value;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.kafka.core.KafkaTemplate;
-import org.springframework.kafka.support.SendResult;
 import org.springframework.stereotype.Component;
 
-import java.nio.charset.StandardCharsets;
-import java.time.Instant;
-import java.util.UUID;
-import java.util.concurrent.CompletableFuture;
+import java.time.LocalDateTime;
+import java.util.HashMap;
+import java.util.Map;
 
 /**
  * Kafka producer for batch processing events.
  * Publishes domain events to appropriate Kafka topics for asynchronous processing.
  */
+@Slf4j
 @Component
+@RequiredArgsConstructor
 public class BatchEventProducer {
 
-    private static final Logger log = LoggerFactory.getLogger(BatchEventProducer.class);
-
-    private final KafkaTemplate<String, String> kafkaTemplate;
+    private final KafkaTemplate<String, Object> kafkaTemplate;
     private final ObjectMapper objectMapper;
 
-    @Value("${kafka.topics.batch-created:batch-created}")
-    private String batchCreatedTopic;
+    /**
+     * Sends batch created event.
+     */
+    public void sendBatchCreatedEvent(Batch batch) {
+        Map<String, Object> event = new HashMap<>();
+        event.put("batchId", batch.getId());
+        event.put("name", batch.getName());
+        event.put("documentCount", batch.getDocumentCount());
+        event.put("timestamp", LocalDateTime.now());
+        event.put("eventType", "BATCH_CREATED");
 
-    @Value("${kafka.topics.batch-ocr-completed:batch-ocr-completed}")
-    private String batchOcrCompletedTopic;
-
-    @Value("${kafka.topics.batch-analysis-completed:batch-analysis-completed}")
-    private String batchAnalysisCompletedTopic;
-
-    @Value("${kafka.topics.document-processed:document-processed}")
-    private String documentProcessedTopic;
-
-    @Value("${kafka.topics.batch-status-changed:batch-status-changed}")
-    private String batchStatusChangedTopic;
-
-    public BatchEventProducer(KafkaTemplate<String, String> kafkaTemplate,
-                              ObjectMapper objectMapper) {
-        this.kafkaTemplate = kafkaTemplate;
-        this.objectMapper = objectMapper;
+        sendEvent("batch.created", batch.getId(), event);
     }
 
     /**
-     * Publishes a batch created event.
+     * Sends batch OCR completed event.
      */
-    public CompletableFuture<SendResult<String, String>> publishBatchCreated(
-            Long batchId, String batchName, int documentCount) {
+    public void sendBatchOcrCompletedEvent(Batch batch) {
+        Map<String, Object> event = new HashMap<>();
+        event.put("batchId", batch.getId());
+        event.put("processedCount", batch.getProcessedDocumentCount());
+        event.put("failedCount", batch.getFailedDocumentCount());
+        event.put("timestamp", LocalDateTime.now());
+        event.put("eventType", "BATCH_OCR_COMPLETED");
 
-        BatchCreatedEvent event = new BatchCreatedEvent(
-                UUID.randomUUID().toString(),
-                Instant.now(),
-                batchId,
-                batchName,
-                documentCount
-        );
-
-        return publishEvent(batchCreatedTopic, batchId.toString(), event, "BatchCreatedEvent");
+        sendEvent("batch.ocr.completed", batch.getId(), event);
     }
 
     /**
-     * Publishes a batch OCR completed event.
+     * Sends batch status update event.
      */
-    public CompletableFuture<SendResult<String, String>> publishBatchOcrCompleted(
-            Long batchId, int successfulDocuments, int failedDocuments) {
+    public void sendBatchStatusUpdateEvent(Batch batch) {
+        Map<String, Object> event = new HashMap<>();
+        event.put("batchId", batch.getId());
+        event.put("status", batch.getStatus().toString());
+        event.put("timestamp", LocalDateTime.now());
+        event.put("eventType", "BATCH_STATUS_UPDATED");
 
-        BatchOcrCompletedEvent event = new BatchOcrCompletedEvent(
-                UUID.randomUUID().toString(),
-                Instant.now(),
-                batchId,
-                successfulDocuments,
-                failedDocuments
-        );
-
-        return publishEvent(batchOcrCompletedTopic, batchId.toString(), event,
-                "BatchOcrCompletedEvent");
+        sendEvent("batch.status.updated", batch.getId(), event);
     }
 
     /**
-     * Publishes a batch analysis completed event.
+     * Sends document processed event.
      */
-    public CompletableFuture<SendResult<String, String>> publishBatchAnalysisCompleted(
-            Long batchId, String summary, String recommendations) {
+    public void sendDocumentProcessedEvent(String batchId, String documentId) {
+        Map<String, Object> event = new HashMap<>();
+        event.put("batchId", batchId);
+        event.put("documentId", documentId);
+        event.put("timestamp", LocalDateTime.now());
+        event.put("eventType", "DOCUMENT_PROCESSED");
 
-        BatchAnalysisCompletedEvent event = new BatchAnalysisCompletedEvent(
-                UUID.randomUUID().toString(),
-                Instant.now(),
-                batchId,
-                summary,
-                recommendations
-        );
-
-        return publishEvent(batchAnalysisCompletedTopic, batchId.toString(), event,
-                "BatchAnalysisCompletedEvent");
+        sendEvent("document.processed", documentId, event);
     }
 
     /**
-     * Publishes a document processed event.
+     * Sends document failed event.
      */
-    public CompletableFuture<SendResult<String, String>> publishDocumentProcessed(
-            Long documentId, Long batchId, String status, String extractedData) {
+    public void sendDocumentFailedEvent(String batchId, String documentId) {
+        Map<String, Object> event = new HashMap<>();
+        event.put("batchId", batchId);
+        event.put("documentId", documentId);
+        event.put("timestamp", LocalDateTime.now());
+        event.put("eventType", "DOCUMENT_FAILED");
 
-        DocumentProcessedEvent event = new DocumentProcessedEvent(
-                UUID.randomUUID().toString(),
-                Instant.now(),
-                documentId,
-                batchId,
-                status,
-                extractedData
-        );
-
-        return publishEvent(documentProcessedTopic, documentId.toString(), event,
-                "DocumentProcessedEvent");
+        sendEvent("document.failed", documentId, event);
     }
 
     /**
-     * Publishes a batch status changed event.
+     * Generic method to send events to Kafka.
      */
-    public CompletableFuture<SendResult<String, String>> publishBatchStatusChanged(
-            Long batchId, String oldStatus, String newStatus) {
-
-        BatchStatusChangedEvent event = new BatchStatusChangedEvent(
-                UUID.randomUUID().toString(),
-                Instant.now(),
-                batchId,
-                oldStatus,
-                newStatus
-        );
-
-        return publishEvent(batchStatusChangedTopic, batchId.toString(), event,
-                "BatchStatusChangedEvent");
-    }
-
-    /**
-     * Generic method to publish events to Kafka.
-     */
-    private CompletableFuture<SendResult<String, String>> publishEvent(
-            String topic, String key, Object event, String eventType) {
-
+    private void sendEvent(String topic, String key, Map<String, Object> event) {
         try {
-            String payload = objectMapper.writeValueAsString(event);
-
-            ProducerRecord<String, String> record = new ProducerRecord<>(topic, key, payload);
-
-            // Add event metadata headers
-            record.headers().add(new RecordHeader("eventType",
-                    eventType.getBytes(StandardCharsets.UTF_8)));
-            record.headers().add(new RecordHeader("timestamp",
-                    String.valueOf(Instant.now().toEpochMilli()).getBytes(StandardCharsets.UTF_8)));
-            record.headers().add(new RecordHeader("source",
-                    "apex-idp".getBytes(StandardCharsets.UTF_8)));
-
-            log.debug("Publishing {} to topic {} with key {}", eventType, topic, key);
-
-            return kafkaTemplate.send(record)
-                    .whenComplete((result, ex) -> {
-                        if (ex != null) {
-                            log.error("Failed to publish {} to topic {}: {}",
-                                    eventType, topic, ex.getMessage(), ex);
-                        } else {
-                            log.info("Successfully published {} to topic {} at offset {}",
-                                    eventType, topic, result.getRecordMetadata().offset());
-                        }
-                    });
-
-        } catch (JsonProcessingException e) {
-            log.error("Failed to serialize event {}: {}", eventType, e.getMessage(), e);
-            CompletableFuture<SendResult<String, String>> failedFuture = new CompletableFuture<>();
-            failedFuture.completeExceptionally(e);
-            return failedFuture;
+            log.debug("Sending event to topic {} with key {}: {}", topic, key, event);
+            kafkaTemplate.send(topic, key, event);
+        } catch (Exception e) {
+            log.error("Failed to send event to topic {}: {}", topic, e.getMessage(), e);
         }
-    }
-
-    /**
-     * Event classes for different batch processing stages.
-     */
-    public static class BatchCreatedEvent extends DomainEvent {
-        private final Long batchId;
-        private final String batchName;
-        private final int documentCount;
-
-        public BatchCreatedEvent(String eventId, Instant timestamp, Long batchId,
-                                 String batchName, int documentCount) {
-            super(eventId, timestamp);
-            this.batchId = batchId;
-            this.batchName = batchName;
-            this.documentCount = documentCount;
-        }
-
-        // Getters
-        public Long getBatchId() { return batchId; }
-        public String getBatchName() { return batchName; }
-        public int getDocumentCount() { return documentCount; }
-    }
-
-    public static class BatchOcrCompletedEvent extends DomainEvent {
-        private final Long batchId;
-        private final int successfulDocuments;
-        private final int failedDocuments;
-
-        public BatchOcrCompletedEvent(String eventId, Instant timestamp, Long batchId,
-                                      int successfulDocuments, int failedDocuments) {
-            super(eventId, timestamp);
-            this.batchId = batchId;
-            this.successfulDocuments = successfulDocuments;
-            this.failedDocuments = failedDocuments;
-        }
-
-        // Getters
-        public Long getBatchId() { return batchId; }
-        public int getSuccessfulDocuments() { return successfulDocuments; }
-        public int getFailedDocuments() { return failedDocuments; }
-    }
-
-    public static class BatchAnalysisCompletedEvent extends DomainEvent {
-        private final Long batchId;
-        private final String summary;
-        private final String recommendations;
-
-        public BatchAnalysisCompletedEvent(String eventId, Instant timestamp, Long batchId,
-                                           String summary, String recommendations) {
-            super(eventId, timestamp);
-            this.batchId = batchId;
-            this.summary = summary;
-            this.recommendations = recommendations;
-        }
-
-        // Getters
-        public Long getBatchId() { return batchId; }
-        public String getSummary() { return summary; }
-        public String getRecommendations() { return recommendations; }
-    }
-
-    public static class DocumentProcessedEvent extends DomainEvent {
-        private final Long documentId;
-        private final Long batchId;
-        private final String status;
-        private final String extractedData;
-
-        public DocumentProcessedEvent(String eventId, Instant timestamp, Long documentId,
-                                      Long batchId, String status, String extractedData) {
-            super(eventId, timestamp);
-            this.documentId = documentId;
-            this.batchId = batchId;
-            this.status = status;
-            this.extractedData = extractedData;
-        }
-
-        // Getters
-        public Long getDocumentId() { return documentId; }
-        public Long getBatchId() { return batchId; }
-        public String getStatus() { return status; }
-        public String getExtractedData() { return extractedData; }
-    }
-
-    public static class BatchStatusChangedEvent extends DomainEvent {
-        private final Long batchId;
-        private final String oldStatus;
-        private final String newStatus;
-
-        public BatchStatusChangedEvent(String eventId, Instant timestamp, Long batchId,
-                                       String oldStatus, String newStatus) {
-            super(eventId, timestamp);
-            this.batchId = batchId;
-            this.oldStatus = oldStatus;
-            this.newStatus = newStatus;
-        }
-
-        // Getters
-        public Long getBatchId() { return batchId; }
-        public String getOldStatus() { return oldStatus; }
-        public String getNewStatus() { return newStatus; }
-    }
-
-    /**
-     * Base domain event class.
-     */
-    public static abstract class DomainEvent {
-        private final String eventId;
-        private final Instant timestamp;
-
-        protected DomainEvent(String eventId, Instant timestamp) {
-            this.eventId = eventId;
-            this.timestamp = timestamp;
-        }
-
-        public String getEventId() { return eventId; }
-        public Instant getTimestamp() { return timestamp; }
     }
 }

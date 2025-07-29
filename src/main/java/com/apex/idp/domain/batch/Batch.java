@@ -1,8 +1,6 @@
 package com.apex.idp.domain.batch;
 
-import com.apex.idp.domain.analysis.Analysis;
 import com.apex.idp.domain.document.Document;
-import com.apex.idp.domain.document.DocumentStatus;
 import jakarta.persistence.*;
 import lombok.*;
 import org.hibernate.annotations.CreationTimestamp;
@@ -16,7 +14,6 @@ import java.util.UUID;
 @Entity
 @Table(name = "batches")
 @Getter
-@Setter // FIX: Add Setter so services can modify the entity
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 @AllArgsConstructor
 @Builder
@@ -28,11 +25,13 @@ public class Batch {
     @Column(nullable = false)
     private String name;
 
-    // NEW FIELD
+    @Column(columnDefinition = "TEXT")
+    @Setter
     private String description;
 
     @Enumerated(EnumType.STRING)
     @Column(nullable = false)
+    @Setter
     private BatchStatus status;
 
     @OneToMany(mappedBy = "batch", cascade = CascadeType.ALL, orphanRemoval = true)
@@ -42,13 +41,8 @@ public class Batch {
     @Column(name = "processed_count")
     private int processedCount;
 
-    // NEW FIELD
-    @OneToOne(fetch = FetchType.LAZY, cascade = CascadeType.ALL)
-    @JoinColumn(name = "analysis_id")
-    private Analysis analysis;
-
-    // NEW FIELD
-    private String createdBy;
+    @Column(name = "error_message")
+    private String errorMessage;
 
     @CreationTimestamp
     @Column(name = "created_at", nullable = false, updatable = false)
@@ -62,7 +56,7 @@ public class Batch {
         return Batch.builder()
                 .id(UUID.randomUUID().toString())
                 .name(name)
-                .status(BatchStatus.PENDING)
+                .status(BatchStatus.CREATED)
                 .processedCount(0)
                 .build();
     }
@@ -73,8 +67,8 @@ public class Batch {
     }
 
     public void startProcessing() {
-        if (status != BatchStatus.PENDING) {
-            throw new IllegalStateException("Batch must be in PENDING status to start processing");
+        if (status != BatchStatus.CREATED) {
+            throw new IllegalStateException("Batch must be in CREATED status to start processing");
         }
         this.status = BatchStatus.PROCESSING;
     }
@@ -87,10 +81,19 @@ public class Batch {
         this.status = BatchStatus.FAILED;
     }
 
+    public void completeAnalysis() {
+        this.status = BatchStatus.COMPLETED;
+    }
+
+    public void failAnalysis(String errorMessage) {
+        this.status = BatchStatus.FAILED;
+        this.errorMessage = errorMessage;
+    }
+
     public void incrementProcessedCount() {
         this.processedCount++;
         if (processedCount >= documents.size() && status == BatchStatus.PROCESSING) {
-            completeProcessing();
+            this.status = BatchStatus.OCR_COMPLETED;
         }
     }
 
@@ -98,22 +101,15 @@ public class Batch {
         return documents.size();
     }
 
-    // NEW HELPER METHODS
     public int getProcessedDocumentCount() {
-        if (documents == null) return 0;
-        return (int) documents.stream().filter(d -> d.getStatus() == DocumentStatus.COMPLETED).count();
+        return (int) documents.stream()
+                .filter(doc -> doc.getStatus() == Document.DocumentStatus.PROCESSED)
+                .count();
     }
 
     public int getFailedDocumentCount() {
-        if (documents == null) return 0;
-        return (int) documents.stream().filter(d -> d.getStatus() == DocumentStatus.FAILED).count();
-    }
-
-    public int getProcessingProgress() {
-        if (documents == null || documents.isEmpty()) {
-            return 0;
-        }
-        int processedOrFailed = getProcessedDocumentCount() + getFailedDocumentCount();
-        return (processedOrFailed * 100) / getDocumentCount();
+        return (int) documents.stream()
+                .filter(doc -> doc.getStatus() == Document.DocumentStatus.FAILED)
+                .count();
     }
 }

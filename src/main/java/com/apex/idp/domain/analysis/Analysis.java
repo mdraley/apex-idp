@@ -6,6 +6,9 @@ import lombok.*;
 import org.hibernate.annotations.CreationTimestamp;
 
 import java.time.LocalDateTime;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 @Entity
@@ -26,8 +29,18 @@ public class Analysis {
     @Column(columnDefinition = "TEXT", nullable = false)
     private String summary;
 
-    @Column(columnDefinition = "TEXT")
-    private String recommendations;
+    @ElementCollection
+    @CollectionTable(name = "analysis_recommendations", joinColumns = @JoinColumn(name = "analysis_id"))
+    @Column(name = "recommendation")
+    @Builder.Default
+    private List<String> recommendations = List.of();
+
+    @ElementCollection
+    @CollectionTable(name = "analysis_metadata", joinColumns = @JoinColumn(name = "analysis_id"))
+    @MapKeyColumn(name = "metadata_key")
+    @Column(name = "metadata_value")
+    @Builder.Default
+    private Map<String, String> metadata = new HashMap<>();
 
     @CreationTimestamp
     @Column(name = "created_at", nullable = false, updatable = false)
@@ -38,7 +51,26 @@ public class Analysis {
                 .id(UUID.randomUUID().toString())
                 .batch(batch)
                 .summary(summary)
-                .recommendations(recommendations)
+                .recommendations(parseRecommendations(recommendations))
                 .build();
+    }
+
+    private static List<String> parseRecommendations(String recommendations) {
+        if (recommendations == null || recommendations.trim().isEmpty()) {
+            return List.of();
+        }
+        // Simple parsing - could be improved based on actual format
+        return List.of(recommendations.split("\n"));
+    }
+
+    public void setMetadata(Map<String, Object> metadata) {
+        this.metadata.clear();
+        if (metadata != null) {
+            metadata.forEach((key, value) -> {
+                if (value != null) {
+                    this.metadata.put(key, value.toString());
+                }
+            });
+        }
     }
 }

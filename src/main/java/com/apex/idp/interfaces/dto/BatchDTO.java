@@ -6,36 +6,49 @@ import lombok.Builder;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 
+import java.time.LocalDateTime;
+import java.util.List;
+
 @Getter
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor
 public class BatchDTO {
-
     private String id;
     private String name;
+    private String description;
     private String status;
     private int documentCount;
     private int processedCount;
-    private String createdAt;
-    private String updatedAt;
+    private int failedCount;
+    private LocalDateTime createdAt;
+    private LocalDateTime updatedAt;
+    private List<DocumentDTO> documents;
+    private String error;
 
     /**
-     * A static factory method to create a BatchDTO from a Batch domain entity.
-     * This is the method the compiler was unable to find.
-     *
-     * @param batch The Batch entity from the database.
-     * @return A new BatchDTO object with data suitable for the frontend.
+     * Creates a BatchDTO from a Batch domain entity.
      */
     public static BatchDTO from(Batch batch) {
         return BatchDTO.builder()
                 .id(batch.getId())
                 .name(batch.getName())
-                .status(batch.getStatus().name()) // Convert enum to a String
+                .description(batch.getDescription())
+                .status(batch.getStatus().name())
                 .documentCount(batch.getDocumentCount())
-                .processedCount(batch.getProcessedCount())
-                .createdAt(batch.getCreatedAt().toString())
-                .updatedAt(batch.getUpdatedAt() != null ? batch.getUpdatedAt().toString() : null)
+                .processedCount(batch.getProcessedDocumentCount())
+                .failedCount(batch.getFailedDocumentCount())
+                .createdAt(batch.getCreatedAt())
+                .updatedAt(batch.getUpdatedAt())
+                .build();
+    }
+
+    /**
+     * Creates an error BatchDTO.
+     */
+    public static BatchDTO error(String errorMessage) {
+        return BatchDTO.builder()
+                .error(errorMessage)
                 .build();
     }
 }

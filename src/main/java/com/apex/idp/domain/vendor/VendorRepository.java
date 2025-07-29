@@ -12,6 +12,8 @@ public interface VendorRepository extends JpaRepository<Vendor, String> {
 
     Optional<Vendor> findByName(String name);
 
+    Optional<Vendor> findByNameIgnoreCase(String name);
+
     List<Vendor> findByStatus(VendorStatus status);
 
     List<Vendor> findByNameContainingIgnoreCase(String name);
