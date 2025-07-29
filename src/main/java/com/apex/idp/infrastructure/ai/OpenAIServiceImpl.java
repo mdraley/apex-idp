@@ -42,7 +42,7 @@ public class OpenAIServiceImpl implements OpenAIService {
     @Value("${openai.max-content-length:4000}")
     private int maxContentLength;
 
-    public OpenAIServiceImpl(@Value("${openai.api-key}") String apiKey,
+    public OpenAIServiceImpl(@Value("${openai.api.key}") String apiKey,
                              ObjectMapper objectMapper) {
         this.openAiService = new OpenAiService(apiKey, Duration.ofSeconds(timeoutSeconds));
         this.objectMapper = objectMapper;
@@ -83,7 +83,6 @@ public class OpenAIServiceImpl implements OpenAIService {
             metadata.put("model", model);
 
             return new AnalysisResult(
-                    response,
                     extractSummary(response),
                     extractRecommendations(response),
                     metadata
@@ -96,8 +95,64 @@ public class OpenAIServiceImpl implements OpenAIService {
     }
 
     @Override
-    public ChatResponse chat(String message, ChatContext context, Map<String, Object> metadata)
+    public Map<String, Object> extractDocumentData(Document document,
+                                                   ExtractionSchema extractionSchema)
             throws AIServiceException {
+        log.debug("Extracting structured data with schema");
+
+        try {
+            String schemaDescription = describeSchema(extractionSchema);
+
+            String systemPrompt = """
+                Extract structured data from the document according to the provided schema.
+                Return the data as valid JSON matching the schema exactly.
+                For missing fields, use null.
+                """;
+
+            String userPrompt = String.format("""
+                Schema:
+                %s
+                
+                Document:
+                %s
+                
+                Extract the data as JSON.
+                """,
+                    schemaDescription,
+                    truncateContent(document.getExtractedText(), maxContentLength)
+            );
+
+            com.theokanning.openai.completion.chat.ChatMessage systemMessage =
+                    new com.theokanning.openai.completion.chat.ChatMessage(ChatMessageRole.SYSTEM.value(), systemPrompt);
+            com.theokanning.openai.completion.chat.ChatMessage userMessage =
+                    new com.theokanning.openai.completion.chat.ChatMessage(ChatMessageRole.USER.value(), userPrompt);
+
+            ChatCompletionRequest request = ChatCompletionRequest.builder()
+                    .model(model)
+                    .messages(Arrays.asList(systemMessage, userMessage))
+                    .temperature(0.1)
+                    .maxTokens(1000)
+                    .build();
+
+            ChatCompletionResult result = openAiService.createChatCompletion(request);
+            String responseContent = result.getChoices().get(0).getMessage().getContent();
+
+            Map<String, Object> extractedData = objectMapper.readValue(responseContent, Map.class);
+
+            // Validate extracted data against schema
+            validateExtractedData(extractedData, extractionSchema);
+
+            return extractedData;
+
+        } catch (Exception e) {
+            log.error("Data extraction failed", e);
+            throw new AIServiceException("Failed to extract structured data", e);
+        }
+    }
+
+    @Override
+    public ChatResponse chat(String message, ChatContext context,
+                             List<ChatMessage> conversationHistory) throws AIServiceException {
         log.debug("Processing chat message with context");
 
         try {
@@ -122,8 +177,6 @@ public class OpenAIServiceImpl implements OpenAIService {
                     message
             );
 
-            // Fixed: Add timestamp parameter to ChatMessage constructor
-            Long timestamp = System.currentTimeMillis();
             com.theokanning.openai.completion.chat.ChatMessage systemMessage =
                     new com.theokanning.openai.completion.chat.ChatMessage(ChatMessageRole.SYSTEM.value(), systemPrompt);
             com.theokanning.openai.completion.chat.ChatMessage userMessage =
@@ -142,6 +195,10 @@ public class OpenAIServiceImpl implements OpenAIService {
             // Extract any document references from the response
             List<DocumentReference> references = extractDocumentReferences(responseContent, contextString);
 
+            Map<String, Object> metadata = new HashMap<>();
+            metadata.put("model", model);
+            metadata.put("contextLength", contextString.length());
+
             return new ChatResponse(responseContent, references, metadata);
 
         } catch (Exception e) {
@@ -150,72 +207,16 @@ public class OpenAIServiceImpl implements OpenAIService {
         }
     }
 
-    @Override
-    public ClassificationResult classifyDocument(String documentText) throws AIServiceException {
-        log.debug("Classifying document");
-
-        try {
-            String systemPrompt = """
-                Classify the document into one of these categories:
-                - INVOICE: Bills or invoices for goods/services
-                - PURCHASE_ORDER: Orders for goods/services
-                - RECEIPT: Proof of payment or delivery
-                - STATEMENT: Account statements or summaries
-                - CONTRACT: Legal agreements or contracts
-                - OTHER: Documents that don't fit other categories
-                
-                Return JSON with format:
-                {
-                  "category": "CATEGORY_NAME",
-                  "confidence": 0.0-1.0,
-                  "subcategories": ["subcategory1", "subcategory2"]
-                }
-                """;
-
-            String userPrompt = "Classify this document:\n" +
-                    truncateContent(documentText, maxContentLength);
-
-            // Fixed: Use OpenAI library's ChatMessage
-            com.theokanning.openai.completion.chat.ChatMessage systemMessage =
-                    new com.theokanning.openai.completion.chat.ChatMessage(ChatMessageRole.SYSTEM.value(), systemPrompt);
-            com.theokanning.openai.completion.chat.ChatMessage userMessage =
-                    new com.theokanning.openai.completion.chat.ChatMessage(ChatMessageRole.USER.value(), userPrompt);
-
-            ChatCompletionRequest request = ChatCompletionRequest.builder()
-                    .model(model)
-                    .messages(Arrays.asList(systemMessage, userMessage))
-                    .temperature(0.1)
-                    .maxTokens(200)
-                    .build();
-
-            ChatCompletionResult result = openAiService.createChatCompletion(request);
-            String responseContent = result.getChoices().get(0).getMessage().getContent();
-
-            JsonNode jsonResponse = objectMapper.readTree(responseContent);
-
-            String category = jsonResponse.get("category").asText();
-            double confidence = jsonResponse.get("confidence").asDouble();
-
-            Map<String, Double> confidenceScores = new HashMap<>();
-            confidenceScores.put(category, confidence);
-
-            return new ClassificationResult(category, confidenceScores);
-
-        } catch (Exception e) {
-            log.error("Document classification failed", e);
-            throw new AIServiceException("Failed to classify document", e);
-        }
+    // Overloaded method for backward compatibility
+    public ChatResponse chat(String message, ChatContext context,
+                             Map<String, Object> metadata) throws AIServiceException {
+        return chat(message, context, new ArrayList<>());
     }
 
     @Override
     public ClassificationResult classifyDocument(Document document, List<String> categories)
             throws AIServiceException {
-        // Delegate to the simpler method if no custom categories
-        if (categories == null || categories.isEmpty()) {
-            return classifyDocument(document.getExtractedText());
-        }
-
-        log.debug("Classifying document with custom categories");
+        log.debug("Classifying document with categories: {}", categories);
 
         try {
             String categoriesList = String.join(", ", categories);
@@ -260,62 +261,6 @@ public class OpenAIServiceImpl implements OpenAIService {
         } catch (Exception e) {
             log.error("Document classification failed", e);
             throw new AIServiceException("Failed to classify document", e);
-        }
-    }
-
-    @Override
-    public ExtractionResult extractStructuredData(String documentText, ExtractionSchema schema)
-            throws AIServiceException {
-        log.debug("Extracting structured data with schema");
-
-        try {
-            String schemaDescription = describeSchema(schema);
-
-            String systemPrompt = """
-                Extract structured data from the document according to the provided schema.
-                Return the data as valid JSON matching the schema exactly.
-                For missing fields, use null.
-                """;
-
-            String userPrompt = String.format("""
-                Schema:
-                %s
-                
-                Document:
-                %s
-                
-                Extract the data as JSON.
-                """,
-                    schemaDescription,
-                    truncateContent(documentText, maxContentLength)
-            );
-
-            // Fixed: Use OpenAI library's ChatMessage
-            com.theokanning.openai.completion.chat.ChatMessage systemMessage =
-                    new com.theokanning.openai.completion.chat.ChatMessage(ChatMessageRole.SYSTEM.value(), systemPrompt);
-            com.theokanning.openai.completion.chat.ChatMessage userMessage =
-                    new com.theokanning.openai.completion.chat.ChatMessage(ChatMessageRole.USER.value(), userPrompt);
-
-            ChatCompletionRequest request = ChatCompletionRequest.builder()
-                    .model(model)
-                    .messages(Arrays.asList(systemMessage, userMessage))
-                    .temperature(0.1)
-                    .maxTokens(1000)
-                    .build();
-
-            ChatCompletionResult result = openAiService.createChatCompletion(request);
-            String responseContent = result.getChoices().get(0).getMessage().getContent();
-
-            Map<String, Object> extractedData = objectMapper.readValue(responseContent, Map.class);
-
-            // Validate extracted data against schema
-            validateExtractedData(extractedData, schema);
-
-            return new ExtractionResult(extractedData, 0.9); // Confidence placeholder
-
-        } catch (Exception e) {
-            log.error("Data extraction failed", e);
-            throw new AIServiceException("Failed to extract structured data", e);
         }
     }
 
@@ -371,19 +316,6 @@ public class OpenAIServiceImpl implements OpenAIService {
             log.error("Failed to generate invoice summary", e);
             throw new AIServiceException("Failed to generate invoice summary", e);
         }
-    }
-
-    @Override
-    public String generateChatResponse(String message, String context) throws AIServiceException {
-        ChatResponse response = chat(message,
-                new ChatContext(null, null, Map.of("contextString", context)),
-                new HashMap<>());
-        return response.getMessage();
-    }
-
-    @Override
-    public String generateResponse(String message, String context) throws AIServiceException {
-        return generateChatResponse(message, context);
     }
 
     // Private helper methods
@@ -460,7 +392,7 @@ public class OpenAIServiceImpl implements OpenAIService {
         return response.length() > 200 ? response.substring(0, 200) + "..." : response;
     }
 
-    private List<String> extractRecommendations(String response) {
+    private String extractRecommendations(String response) {
         List<String> recommendations = new ArrayList<>();
 
         // Look for numbered recommendations
@@ -471,7 +403,7 @@ public class OpenAIServiceImpl implements OpenAIService {
             recommendations.add(matcher.group(1).trim());
         }
 
-        return recommendations;
+        return String.join("\n", recommendations);
     }
 
     private String describeSchema(ExtractionSchema schema) {

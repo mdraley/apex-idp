@@ -17,7 +17,7 @@ import java.util.UUID;
 @Entity
 @Table(name = "invoices")
 @Getter
-@Setter // FIX: Add @Setter
+@Setter
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 @AllArgsConstructor
 @Builder
@@ -32,7 +32,6 @@ public class Invoice {
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "vendor_id")
-    @Setter
     private Vendor vendor;
 
     @Column(name = "invoice_number")
@@ -67,12 +66,23 @@ public class Invoice {
     @Column(name = "updated_at")
     private LocalDateTime updatedAt;
 
-    // NEW FIELDS
+    // Additional fields
+    @Column(name = "tax_amount", precision = 10, scale = 2)
     private BigDecimal taxAmount;
+
+    @Column(name = "currency", length = 3)
     private String currency;
+
+    @Column(name = "payment_terms")
     private String paymentTerms;
+
+    @Column(columnDefinition = "TEXT")
     private String notes;
+
+    @Column(name = "approved_by")
     private String approvedBy;
+
+    @Column(name = "approved_at")
     private LocalDateTime approvedAt;
 
     public static Invoice create(Document document) {
@@ -80,6 +90,7 @@ public class Invoice {
                 .id(UUID.randomUUID().toString())
                 .document(document)
                 .status(InvoiceStatus.PENDING)
+                .currency("USD")
                 .build();
     }
 
@@ -97,6 +108,7 @@ public class Invoice {
             throw new IllegalStateException("Only processed invoices can be approved");
         }
         this.status = InvoiceStatus.APPROVED;
+        this.approvedAt = LocalDateTime.now();
     }
 
     public void reject() {
@@ -113,8 +125,7 @@ public class Invoice {
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
     }
 
-    // Helper method to get total amount
     public BigDecimal getTotalAmount() {
-        return this.amount; // Assuming 'amount' is the total. Adjust if necessary.
+        return this.amount != null ? this.amount : BigDecimal.ZERO;
     }
 }

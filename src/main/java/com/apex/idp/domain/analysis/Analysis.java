@@ -14,6 +14,7 @@ import java.util.UUID;
 @Entity
 @Table(name = "analyses")
 @Getter
+@Setter
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 @AllArgsConstructor
 @Builder

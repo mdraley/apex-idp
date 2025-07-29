@@ -1,9 +1,6 @@
 package com.apex.idp.infrastructure.kafka;
 
 import com.apex.idp.application.service.AnalysisService;
-import com.apex.idp.application.service.BatchService;
-import com.apex.idp.application.service.DocumentService;
-import com.apex.idp.domain.batch.Batch;
 import com.apex.idp.infrastructure.websocket.WebSocketNotificationService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.Data;
@@ -46,7 +43,7 @@ public class BatchEventListener {
     /**
      * Handles batch created events.
      */
-    @KafkaListener(topics = "${kafka.topics.batch-created}", groupId = "${kafka.consumer.group-id}")
+    @KafkaListener(topics = "${kafka.topics.batch-created:batch.created}", groupId = "${kafka.consumer.group-id:apex-group}")
     @Retryable(value = Exception.class, maxAttempts = 3, backoff = @Backoff(delay = 1000))
     public void handleBatchCreated(@Payload String message,
                                    @Header(KafkaHeaders.RECEIVED_TOPIC) String topic,
@@ -82,7 +79,7 @@ public class BatchEventListener {
     /**
      * Handles OCR completed events.
      */
-    @KafkaListener(topics = "${kafka.topics.ocr-completed}", groupId = "${kafka.consumer.group-id}")
+    @KafkaListener(topics = "${kafka.topics.ocr-completed:document.ocr.completed}", groupId = "${kafka.consumer.group-id:apex-group}")
     public void handleOCRCompleted(@Payload String message,
                                    @Header(KafkaHeaders.RECEIVED_TOPIC) String topic,
                                    Acknowledgment acknowledgment) {
@@ -113,7 +110,7 @@ public class BatchEventListener {
     /**
      * Handles batch OCR completed events.
      */
-    @KafkaListener(topics = "${kafka.topics.batch-ocr-completed}", groupId = "${kafka.consumer.group-id}")
+    @KafkaListener(topics = "${kafka.topics.batch-ocr-completed:batch.ocr.completed}", groupId = "${kafka.consumer.group-id:apex-group}")
     public void handleBatchOCRCompleted(@Payload String message,
                                         @Header(KafkaHeaders.RECEIVED_TOPIC) String topic,
                                         Acknowledgment acknowledgment) {
@@ -144,7 +141,7 @@ public class BatchEventListener {
     /**
      * Handles document processing errors.
      */
-    @KafkaListener(topics = "${kafka.topics.processing-error}", groupId = "${kafka.consumer.group-id}")
+    @KafkaListener(topics = "${kafka.topics.processing-error:processing.error}", groupId = "${kafka.consumer.group-id:apex-group}")
     public void handleProcessingError(@Payload String message,
                                       @Header(KafkaHeaders.RECEIVED_TOPIC) String topic,
                                       @Header(KafkaHeaders.RECEIVED_PARTITION) int partition,
@@ -155,12 +152,11 @@ public class BatchEventListener {
         try {
             ErrorEvent event = objectMapper.readValue(message, ErrorEvent.class);
 
-            // Fixed: Convert partition (int) to String for logging
             log.error("Processing error for {} {}: {} - Partition: {}",
                     event.getEntityType(),
                     event.getEntityId(),
                     event.getErrorMessage(),
-                    String.valueOf(partition)  // Fixed: Convert int to String
+                    partition
             );
 
             // Send error notification

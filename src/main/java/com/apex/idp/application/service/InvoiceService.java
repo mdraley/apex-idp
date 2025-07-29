@@ -2,7 +2,6 @@ package com.apex.idp.application.service;
 
 import com.apex.idp.domain.invoice.Invoice;
 import com.apex.idp.domain.invoice.InvoiceRepository;
-import com.apex.idp.interfaces.dto.InvoiceDTO;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;

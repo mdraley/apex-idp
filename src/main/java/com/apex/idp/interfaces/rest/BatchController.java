@@ -1,7 +1,6 @@
 package com.apex.idp.interfaces.rest;
 
 import com.apex.idp.application.service.AnalysisService;
-import com.apex.idp.application.service.BatchService;
 import com.apex.idp.domain.batch.Batch;
 import com.apex.idp.domain.batch.BatchStatus;
 import com.apex.idp.interfaces.dto.*;
@@ -33,7 +32,6 @@ import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotEmpty;
 import jakarta.validation.constraints.Size;
 
-import java.time.LocalDateTime;
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -107,11 +105,10 @@ public class BatchController {
             }
 
             // Create batch
-            Batch batch = batchService.createBatch(batchName, description, files);
-            BatchDTO batchDTO = convertToDTO(batch);
+            BatchDTO batchDTO = batchService.createBatch(batchName, description, files);
 
             log.info("Batch created successfully with ID: {} by user: {}",
-                    batch.getId(), userDetails.getUsername());
+                    batchDTO.getId(), userDetails.getUsername());
 
             return ResponseEntity.status(HttpStatus.CREATED).body(batchDTO);
 
@@ -168,10 +165,9 @@ public class BatchController {
 
         log.debug("Fetching batch with ID: {}", id);
 
-        Optional<Batch> batch = batchService.getBatchById(id);
-        if (batch.isPresent()) {
-            BatchDTO batchDTO = convertToDTO(batch.get());
-            return ResponseEntity.ok(batchDTO);
+        Optional<BatchDTO> batchDTO = batchService.getBatchDTOById(id);
+        if (batchDTO.isPresent()) {
+            return ResponseEntity.ok(batchDTO.get());
         } else {
             return ResponseEntity.notFound().build();
         }
@@ -300,18 +296,19 @@ public class BatchController {
         log.debug("Fetching batch statistics");
 
         try {
-            // This would typically come from a service method
-            BatchStatistics stats = BatchStatistics.builder()
-                    .totalBatches(100L)
-                    .processingBatches(5L)
-                    .completedBatches(90L)
-                    .failedBatches(5L)
-                    .totalDocuments(1000L)
+            BatchService.BatchStatistics stats = batchService.getBatchStatistics();
+
+            BatchStatistics responseStats = BatchStatistics.builder()
+                    .totalBatches(stats.totalBatches())
+                    .processingBatches(stats.processingBatches())
+                    .completedBatches(stats.completedBatches())
+                    .failedBatches(stats.failedBatches())
+                    .totalDocuments(1000L) // Would need to be calculated
                     .averageProcessingTime(120L) // seconds
                     .successRate(95.0)
                     .build();
 
-            return ResponseEntity.ok(stats);
+            return ResponseEntity.ok(responseStats);
         } catch (Exception e) {
             log.error("Error fetching batch statistics", e);
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();

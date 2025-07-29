@@ -39,6 +39,18 @@ public class BatchEventProducer {
     /**
      * Sends batch OCR completed event.
      */
+    public void sendBatchOCRCompletedEvent(String batchId) {
+        Map<String, Object> event = new HashMap<>();
+        event.put("batchId", batchId);
+        event.put("timestamp", LocalDateTime.now());
+        event.put("eventType", "BATCH_OCR_COMPLETED");
+
+        sendEvent("batch.ocr.completed", batchId, event);
+    }
+
+    /**
+     * Sends batch OCR completed event with batch details.
+     */
     public void sendBatchOcrCompletedEvent(Batch batch) {
         Map<String, Object> event = new HashMap<>();
         event.put("batchId", batch.getId());

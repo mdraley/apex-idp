@@ -91,6 +91,9 @@ public class DocumentService {
             Invoice invoice = extractInvoiceData(document, extractedText);
             invoiceRepository.save(invoice);
 
+            // Set invoice relationship
+            document.getInvoices().add(invoice);
+
             // Mark as completed
             document.completeProcessing();
             Document savedDocument = documentRepository.save(document);
@@ -107,6 +110,30 @@ public class DocumentService {
             documentRepository.save(document);
             throw new RuntimeException("Document processing failed", e);
         }
+    }
+
+    /**
+     * Reprocesses a document (for retry logic).
+     */
+    @Transactional
+    public Document reprocessDocument(String documentId) {
+        log.info("Reprocessing document: {}", documentId);
+
+        Document document = documentRepository.findById(documentId)
+                .orElseThrow(() -> new IllegalArgumentException("Document not found: " + documentId));
+
+        // Check retry count
+        if (document.getRetryCount() >= maxRetryCount) {
+            log.error("Max retry count reached for document: {}", documentId);
+            document.failProcessing("Max retry count exceeded");
+            return documentRepository.save(document);
+        }
+
+        // Increment retry count and reprocess
+        document.incrementRetryCount();
+        documentRepository.save(document);
+
+        return processDocument(documentId);
     }
 
     /**

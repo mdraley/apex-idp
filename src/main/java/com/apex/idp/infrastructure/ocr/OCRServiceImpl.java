@@ -1,6 +1,7 @@
 package com.apex.idp.infrastructure.ocr;
 
 import com.apex.idp.domain.document.Document;
+import com.apex.idp.infrastructure.storage.StorageService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.pdfbox.Loader;

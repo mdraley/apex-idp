@@ -5,7 +5,7 @@ import io.jsonwebtoken.Jwts;
 import io.jsonwebtoken.SignatureAlgorithm;
 import io.jsonwebtoken.security.Keys;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Value;  // Correct import
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.stereotype.Component;
 
@@ -35,6 +35,10 @@ public class JwtTokenProvider {
     }
 
     public UserDetails getUserDetails(String username) {
+        return customUserDetailsService.loadUserByUsername(username);
+    }
+
+    public UserDetails loadUserByUsername(String username) {
         return customUserDetailsService.loadUserByUsername(username);
     }
 

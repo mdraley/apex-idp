@@ -14,6 +14,7 @@ import java.util.UUID;
 @Entity
 @Table(name = "batches")
 @Getter
+@Setter
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 @AllArgsConstructor
 @Builder
@@ -26,12 +27,10 @@ public class Batch {
     private String name;
 
     @Column(columnDefinition = "TEXT")
-    @Setter
     private String description;
 
     @Enumerated(EnumType.STRING)
     @Column(nullable = false)
-    @Setter
     private BatchStatus status;
 
     @OneToMany(mappedBy = "batch", cascade = CascadeType.ALL, orphanRemoval = true)
@@ -79,6 +78,10 @@ public class Batch {
 
     public void failProcessing() {
         this.status = BatchStatus.FAILED;
+    }
+
+    public void completeOCR() {
+        this.status = BatchStatus.OCR_COMPLETED;
     }
 
     public void completeAnalysis() {

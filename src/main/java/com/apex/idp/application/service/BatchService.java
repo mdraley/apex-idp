@@ -2,11 +2,11 @@ package com.apex.idp.application.service;
 
 import com.apex.idp.domain.batch.Batch;
 import com.apex.idp.domain.batch.BatchRepository;
+import com.apex.idp.domain.batch.BatchSpecification;
 import com.apex.idp.domain.batch.BatchStatus;
 import com.apex.idp.domain.document.Document;
 import com.apex.idp.domain.document.DocumentRepository;
 import com.apex.idp.infrastructure.kafka.BatchEventProducer;
-import com.apex.idp.infrastructure.storage.MinIOStorageService;
 import com.apex.idp.infrastructure.storage.StorageService;
 import com.apex.idp.infrastructure.websocket.WebSocketNotificationService;
 import com.apex.idp.interfaces.dto.BatchDTO;
@@ -17,6 +17,7 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
+import org.springframework.data.jpa.domain.Specification;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
@@ -56,13 +57,20 @@ public class BatchService {
      * that might block database resources.
      */
     public BatchDTO createBatch(String name, List<MultipartFile> files) {
+        return createBatch(name, null, files);
+    }
+
+    /**
+     * Creates a new batch with description and uploads documents.
+     */
+    public BatchDTO createBatch(String name, String description, List<MultipartFile> files) {
         log.info("Creating new batch: {} with {} files", name, files.size());
 
         // Validate files (outside transaction)
         validateFiles(files);
 
         // Create initial batch in a short transaction
-        Batch batch = createInitialBatch(generateBatchName(name));
+        Batch batch = createInitialBatch(generateBatchName(name), description);
 
         try {
             // Process and upload files (outside transaction)
@@ -92,10 +100,61 @@ public class BatchService {
     }
 
     /**
+     * Gets all batches with pagination and filtering.
+     */
+    @Transactional(readOnly = true)
+    public Page<Batch> getBatches(Pageable pageable, String status, String search) {
+        BatchStatus batchStatus = null;
+        if (status != null && !status.isEmpty()) {
+            try {
+                batchStatus = BatchStatus.valueOf(status.toUpperCase());
+            } catch (IllegalArgumentException e) {
+                log.warn("Invalid batch status: {}", status);
+            }
+        }
+
+        Specification<Batch> spec = BatchSpecification.findByCriteria(batchStatus, search);
+        return batchRepository.findAll(spec, pageable);
+    }
+
+    /**
+     * Gets batches for a specific user.
+     */
+    @Transactional(readOnly = true)
+    public List<Batch> getUserBatches(String username) {
+        // In a real implementation, you would filter by user
+        // For now, return recent batches
+        return batchRepository.findAll(PageRequest.of(0, 10, Sort.by(Sort.Direction.DESC, "createdAt")))
+                .getContent();
+    }
+
+    /**
+     * Gets document IDs for a batch.
+     */
+    @Transactional(readOnly = true)
+    public List<String> getBatchDocumentIds(String batchId) {
+        Optional<Batch> batchOpt = batchRepository.findByIdWithDocuments(batchId);
+        if (batchOpt.isPresent()) {
+            return batchOpt.get().getDocuments().stream()
+                    .map(Document::getId)
+                    .collect(Collectors.toList());
+        }
+        return new ArrayList<>();
+    }
+
+    /**
      * Retrieves a batch by ID.
      */
     @Transactional(readOnly = true)
-    public Optional<BatchDTO> getBatchById(String id) {
+    public Optional<Batch> getBatchById(String id) {
+        return batchRepository.findByIdWithDocuments(id);
+    }
+
+    /**
+     * Retrieves a batch DTO by ID.
+     */
+    @Transactional(readOnly = true)
+    public Optional<BatchDTO> getBatchDTOById(String id) {
         return batchRepository.findByIdWithDocuments(id)
                 .map(this::convertToDTO);
     }
@@ -117,7 +176,7 @@ public class BatchService {
      * Updates batch status.
      */
     @Transactional
-    public void updateBatchStatus(String batchId, BatchStatus status) {
+    public Batch updateBatchStatus(String batchId, BatchStatus status) {
         Batch batch = batchRepository.findById(batchId)
                 .orElseThrow(() -> new IllegalArgumentException("Batch not found: " + batchId));
 
@@ -128,10 +187,12 @@ public class BatchService {
         }
 
         batch.setStatus(status);
-        batchRepository.save(batch);
+        Batch savedBatch = batchRepository.save(batch);
 
         // Send WebSocket notification
         notificationService.notifyBatchStatusUpdate(batchId, status.name());
+
+        return savedBatch;
     }
 
     /**
@@ -143,6 +204,11 @@ public class BatchService {
 
         Batch batch = batchRepository.findByIdWithDocuments(batchId)
                 .orElseThrow(() -> new IllegalArgumentException("Batch not found: " + batchId));
+
+        // Check if batch can be deleted
+        if (batch.getStatus() == BatchStatus.PROCESSING) {
+            throw new IllegalStateException("Cannot delete batch while processing");
+        }
 
         // Delete files from storage
         cleanupBatchFiles(batch);
@@ -208,6 +274,8 @@ public class BatchService {
                     storagePath
             );
 
+            document.setFileSize(file.getSize());
+
             return documentRepository.save(document);
 
         } catch (Exception e) {
@@ -227,8 +295,11 @@ public class BatchService {
         return BatchDTO.builder()
                 .id(batch.getId())
                 .name(batch.getName())
+                .description(batch.getDescription())
                 .status(batch.getStatus().name())
                 .documentCount(batch.getDocumentCount())
+                .processedCount(batch.getProcessedDocumentCount())
+                .failedCount(batch.getFailedDocumentCount())
                 .createdAt(batch.getCreatedAt())
                 .updatedAt(batch.getUpdatedAt())
                 .documents(batch.getDocuments().stream()
@@ -241,8 +312,10 @@ public class BatchService {
         return com.apex.idp.interfaces.dto.DocumentDTO.builder()
                 .id(document.getId())
                 .fileName(document.getFileName())
+                .contentType(document.getContentType())
                 .fileSize(document.getFileSize())
                 .status(document.getStatus().name())
+                .createdAt(document.getCreatedAt())
                 .build();
     }
 
@@ -287,34 +360,43 @@ public class BatchService {
             log.error("Error cleaning up batch files for batch: {}", batch.getId(), e);
             // Continue with batch deletion even if file cleanup fails
         }
-            }
+    }
 
-            /**
-             * Creates the initial batch with CREATED status in a separate transaction
-             */
-            @Transactional
-            protected Batch createInitialBatch(String name) {
+    /**
+     * Creates the initial batch with CREATED status in a separate transaction
+     */
+    @Transactional
+    protected Batch createInitialBatch(String name) {
+        return createInitialBatch(name, null);
+    }
+
+    /**
+     * Creates the initial batch with CREATED status and description in a separate transaction
+     */
+    @Transactional
+    protected Batch createInitialBatch(String name, String description) {
         Batch batch = Batch.create(name);
+        batch.setDescription(description);
         return batchRepository.save(batch);
-                }
+    }
 
-                /**
-                 * Processes all files for a batch outside a transaction
-                 */
-                private List<Document> processFiles(Batch batch, List<MultipartFile> files) {
+    /**
+     * Processes all files for a batch outside a transaction
+     */
+    private List<Document> processFiles(Batch batch, List<MultipartFile> files) {
         List<Document> documents = new ArrayList<>();
         for (MultipartFile file : files) {
             Document document = processFile(batch, file);
             documents.add(document);
         }
         return documents;
-                }
+    }
 
-                /**
-                 * Updates batch with documents and changes status to PROCESSING in a separate transaction
-                 */
-                @Transactional
-                protected Batch updateBatchWithDocuments(String batchId, List<Document> documents) {
+    /**
+     * Updates batch with documents and changes status to PROCESSING in a separate transaction
+     */
+    @Transactional
+    protected Batch updateBatchWithDocuments(String batchId, List<Document> documents) {
         Batch batch = batchRepository.findById(batchId)
                 .orElseThrow(() -> new IllegalArgumentException("Batch not found: " + batchId));
 

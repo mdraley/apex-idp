@@ -14,6 +14,7 @@ import java.util.UUID;
 @Entity
 @Table(name = "vendors")
 @Getter
+@Setter
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 @AllArgsConstructor
 @Builder
@@ -25,8 +26,10 @@ public class Vendor {
     @Column(nullable = false, unique = true)
     private String name;
 
+    @Column(name = "email")
     private String email;
 
+    @Column(name = "phone")
     private String phone;
 
     @Column(columnDefinition = "TEXT")
@@ -79,11 +82,5 @@ public class Vendor {
 
     public void incrementInvoiceCount() {
         this.invoiceCount++;
-    }
-
-    public enum VendorStatus {
-        ACTIVE,
-        INACTIVE,
-        PENDING_VERIFICATION
     }
 }

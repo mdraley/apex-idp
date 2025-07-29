@@ -1,9 +1,7 @@
 package com.apex.idp.interfaces.rest;
 
 import com.apex.idp.application.InvoiceApplicationService;
-import com.apex.idp.domain.invoice.Invoice;
 import com.apex.idp.domain.invoice.InvoiceStatus;
-import com.apex.idp.interfaces.dto.InvoiceDTO;
 import com.apex.idp.interfaces.dto.CountResponseDTO;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
