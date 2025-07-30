@@ -4,9 +4,9 @@ import com.apex.idp.interfaces.dto.LoginRequest;
 import com.apex.idp.interfaces.dto.LoginResponse;
 import com.apex.idp.security.JwtTokenProvider;
 import io.jsonwebtoken.Claims;
-import java.util.stream.Collectors;
-import lombok.RequiredArgsConstructor;
+import lombok.*;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
@@ -18,6 +18,7 @@ import org.springframework.stereotype.Service;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 
 @Slf4j
 @Service
@@ -28,41 +29,18 @@ public class AuthenticationService {
     private final JwtTokenProvider tokenProvider;
     private final PasswordEncoder passwordEncoder;
 
-    // Simulate refresh token storage (in production, use Redis or database)
-    private final Map<String, String> refreshTokenStore = new HashMap<>();
+    @Value("${jwt.expiration:86400000}") // 24 hours default
+    private long jwtExpiration;
 
-    public LoginResponse login(LoginRequest request) {
-        try {
-            Authentication authentication = authenticationManager.authenticate(
-                    new UsernamePasswordAuthenticationToken(request.getUsername(), request.getPassword())
-            );
+    @Value("${jwt.refresh-expiration:604800000}") // 7 days default
+    private long refreshExpiration;
 
-            UserDetails userDetails = (UserDetails) authentication.getPrincipal();
-            String token = tokenProvider.generateToken(userDetails);
+    // Thread-safe refresh token storage (in production, use Redis or database)
+    private final Map<String, RefreshTokenInfo> refreshTokenStore = new ConcurrentHashMap<>();
 
-            return LoginResponse.builder()
-                    .token(token)
-                    .user(LoginResponse.UserInfo.builder()
-                            .id("1") // In real app, get from user entity
-                            .username(userDetails.getUsername())
-                            .email(userDetails.getUsername() + "@apex.com")
-                            .role("ROLE_USER")
-                            .build())
-                    .build();
-
-        } catch (Exception e) {
-            log.error("Authentication failed for user: {}", request.getUsername(), e);
-            throw new RuntimeException("Invalid credentials");
-        }
-    }
-
-    public void logout(String username, String token) {
-        // In a real application, you might want to blacklist the token
-        log.info("User {} logged out", username);
-        // Remove any refresh tokens
-        refreshTokenStore.entrySet().removeIf(entry -> entry.getValue().equals(username));
-    }
-
+    /**
+     * Authenticates user and returns authentication result
+     */
     public AuthenticationResult authenticate(String username, String password) {
         try {
             Authentication authentication = authenticationManager.authenticate(
@@ -73,111 +51,118 @@ public class AuthenticationService {
             String token = tokenProvider.generateToken(userDetails);
             String refreshToken = generateRefreshToken(username);
 
-            return AuthenticationResult.success(
-                    token,
-                    refreshToken,
-                    3600L, // 1 hour expiry
-                    LoginResponse.UserInfo.builder()
-                            .id("1")
-                            .username(userDetails.getUsername())
-                            .email(userDetails.getUsername() + "@apex.com")
-                            .role("ROLE_USER")
-                            .build()
-            );
+            // Build user info
+            LoginResponse.UserInfo userInfo = LoginResponse.UserInfo.builder()
+                    .username(userDetails.getUsername())
+                    .role(extractPrimaryRole(userDetails))
+                    .build();
+
+            return AuthenticationResult.success(token, refreshToken, jwtExpiration, userInfo);
+
         } catch (BadCredentialsException e) {
+            log.warn("Authentication failed for user: {}", username);
             return AuthenticationResult.failure("Invalid credentials");
         } catch (Exception e) {
-            log.error("Authentication error", e);
+            log.error("Authentication error for user: {}", username, e);
             return AuthenticationResult.failure("Authentication failed");
         }
     }
 
+    /**
+     * Refreshes authentication token
+     */
     public AuthenticationResult refreshToken(String refreshToken) {
-        String username = refreshTokenStore.get(refreshToken);
-        if (username == null) {
+        RefreshTokenInfo tokenInfo = refreshTokenStore.get(refreshToken);
+
+        if (tokenInfo == null || tokenInfo.isExpired()) {
+            log.warn("Invalid or expired refresh token");
+            refreshTokenStore.remove(refreshToken);
             return AuthenticationResult.failure("Invalid refresh token");
         }
 
         try {
-            UserDetails userDetails = tokenProvider.loadUserByUsername(username);
+            UserDetails userDetails = tokenProvider.loadUserByUsername(tokenInfo.getUsername());
             String newToken = tokenProvider.generateToken(userDetails);
-            String newRefreshToken = generateRefreshToken(username);
+            String newRefreshToken = generateRefreshToken(tokenInfo.getUsername());
 
             // Remove old refresh token
             refreshTokenStore.remove(refreshToken);
 
-            return AuthenticationResult.success(newToken, newRefreshToken, 3600L, null);
+            LoginResponse.UserInfo userInfo = LoginResponse.UserInfo.builder()
+                    .username(userDetails.getUsername())
+                    .role(extractPrimaryRole(userDetails))
+                    .build();
+
+            return AuthenticationResult.success(newToken, newRefreshToken, jwtExpiration, userInfo);
+
         } catch (Exception e) {
-            log.error("Token refresh error", e);
+            log.error("Error refreshing token", e);
             return AuthenticationResult.failure("Failed to refresh token");
         }
     }
 
-    public boolean validateToken(String token) {
-        return tokenProvider.validateToken(token);
+    /**
+     * Invalidates refresh token (for logout)
+     */
+    public void invalidateRefreshToken(String refreshToken) {
+        refreshTokenStore.remove(refreshToken);
+        log.info("Refresh token invalidated");
     }
 
-    public Map<String, Object> getTokenClaims(String token) {
-        // This would extract claims from the token
-        // For now, return empty map
-        return new HashMap<>();
-    }
-
-    public boolean changePassword(String username, String currentPassword, String newPassword) {
-        // In a real app, this would update the user's password in the database
-        // For now, just validate the current password
-        try {
-            authenticationManager.authenticate(
-                    new UsernamePasswordAuthenticationToken(username, currentPassword)
-            );
-            // Password would be updated here
-            log.info("Password changed for user: {}", username);
-            return true;
-        } catch (BadCredentialsException e) {
-            return false;
-        }
-    }
-
+    /**
+     * Generates a new refresh token
+     */
     private String generateRefreshToken(String username) {
         String token = UUID.randomUUID().toString();
-        refreshTokenStore.put(token, username);
+        RefreshTokenInfo tokenInfo = new RefreshTokenInfo(username, System.currentTimeMillis() + refreshExpiration);
+        refreshTokenStore.put(token, tokenInfo);
         return token;
     }
 
-    // Inner class for authentication results
+    /**
+     * Extracts primary role from user details
+     */
+    private String extractPrimaryRole(UserDetails userDetails) {
+        return userDetails.getAuthorities().stream()
+                .findFirst()
+                .map(auth -> auth.getAuthority().replace("ROLE_", ""))
+                .orElse("USER");
+    }
+
+    /**
+     * Authentication result wrapper
+     */
+    @Getter
+    @AllArgsConstructor(access = AccessLevel.PRIVATE)
     public static class AuthenticationResult {
         private final boolean success;
         private final String token;
         private final String refreshToken;
-        private final Long expiresIn;
+        private final long expiresIn;
         private final LoginResponse.UserInfo user;
         private final String errorMessage;
 
-        private AuthenticationResult(boolean success, String token, String refreshToken,
-                                     Long expiresIn, LoginResponse.UserInfo user, String errorMessage) {
-            this.success = success;
-            this.token = token;
-            this.refreshToken = refreshToken;
-            this.expiresIn = expiresIn;
-            this.user = user;
-            this.errorMessage = errorMessage;
-        }
-
         public static AuthenticationResult success(String token, String refreshToken,
-                                                   Long expiresIn, LoginResponse.UserInfo user) {
+                                                   long expiresIn, LoginResponse.UserInfo user) {
             return new AuthenticationResult(true, token, refreshToken, expiresIn, user, null);
         }
 
         public static AuthenticationResult failure(String errorMessage) {
-            return new AuthenticationResult(false, null, null, null, null, errorMessage);
+            return new AuthenticationResult(false, null, null, 0, null, errorMessage);
         }
+    }
 
-        // Getters
-        public boolean isSuccess() { return success; }
-        public String getToken() { return token; }
-        public String getRefreshToken() { return refreshToken; }
-        public Long getExpiresIn() { return expiresIn; }
-        public LoginResponse.UserInfo getUser() { return user; }
-        public String getErrorMessage() { return errorMessage; }
+    /**
+     * Refresh token information
+     */
+    @AllArgsConstructor
+    @Getter
+    private static class RefreshTokenInfo {
+        private final String username;
+        private final long expiryTime;
+
+        public boolean isExpired() {
+            return System.currentTimeMillis() > expiryTime;
+        }
     }
 }

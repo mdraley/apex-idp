@@ -2,10 +2,7 @@ package com.apex.idp.interfaces.dto;
 
 import com.apex.idp.domain.invoice.Invoice;
 import com.apex.idp.domain.invoice.LineItem;
-import lombok.AllArgsConstructor;
-import lombok.Builder;
-import lombok.Getter;
-import lombok.NoArgsConstructor;
+import lombok.*;
 
 import java.math.BigDecimal;
 import java.util.Collections;
@@ -13,6 +10,7 @@ import java.util.List;
 import java.util.stream.Collectors;
 
 @Getter
+@Setter
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor
@@ -27,17 +25,20 @@ public class InvoiceDTO {
     private String dueDate;
     private BigDecimal amount;
     private String status;
-    private String imageUrl; // This would be populated from a different source, like MinIO presigned URL
+    private String imageUrl;
     private List<LineItemDTO> lineItems;
     private String createdAt;
     private String updatedAt;
 
+    // Additional calculated fields
+    private boolean overdue;
+    private BigDecimal totalWithTax;
+    private String currency;
+    private String paymentTerms;
+    private String description;
+
     /**
-     * A static factory method to create an InvoiceDTO from an Invoice domain entity.
-     * This resolves the "cannot find symbol" compilation errors in the services.
-     *
-     * @param invoice The Invoice entity from the database.
-     * @return A new InvoiceDTO object with data structured for the frontend.
+     * Static factory method to create an InvoiceDTO from an Invoice domain entity.
      */
     public static InvoiceDTO from(Invoice invoice) {
         // Handle potential null vendor
@@ -58,33 +59,36 @@ public class InvoiceDTO {
                 .invoiceDate(invoice.getInvoiceDate() != null ? invoice.getInvoiceDate().toString() : null)
                 .dueDate(invoice.getDueDate() != null ? invoice.getDueDate().toString() : null)
                 .amount(invoice.getAmount())
-                .status(invoice.getStatus().name()) // Convert enum to String
+                .status(invoice.getStatus().name())
                 .lineItems(lineItemDTOs)
                 .createdAt(invoice.getCreatedAt().toString())
                 .updatedAt(invoice.getUpdatedAt() != null ? invoice.getUpdatedAt().toString() : null)
-                // Note: imageUrl would typically be set separately after generating a presigned URL
+                .currency(invoice.getCurrency() != null ? invoice.getCurrency() : "USD")
+                .paymentTerms(invoice.getPaymentTerms())
+                .description(invoice.getDescription())
                 .build();
     }
 
     /**
-     * A nested DTO to represent individual line items within an invoice.
+     * Nested DTO for line items
      */
     @Getter
+    @Setter
     @Builder
     @NoArgsConstructor
     @AllArgsConstructor
     public static class LineItemDTO {
         private String description;
-        private int quantity;
+        private Integer quantity;
         private BigDecimal unitPrice;
-        private BigDecimal amount;
+        private BigDecimal totalPrice;
 
         public static LineItemDTO from(LineItem lineItem) {
             return LineItemDTO.builder()
                     .description(lineItem.getDescription())
                     .quantity(lineItem.getQuantity())
                     .unitPrice(lineItem.getUnitPrice())
-                    .amount(lineItem.getAmount())
+                    .totalPrice(lineItem.getTotalPrice())
                     .build();
         }
     }

@@ -34,7 +34,7 @@ public class Invoice {
     @JoinColumn(name = "vendor_id")
     private Vendor vendor;
 
-    @Column(name = "invoice_number")
+    @Column(name = "invoice_number", unique = true)
     private String invoiceNumber;
 
     @Column(name = "invoice_date")
@@ -43,7 +43,7 @@ public class Invoice {
     @Column(name = "due_date")
     private LocalDate dueDate;
 
-    @Column(precision = 10, scale = 2)
+    @Column(precision = 10, scale = 2, nullable = false)
     private BigDecimal amount;
 
     @Column(columnDefinition = "TEXT")
@@ -71,7 +71,8 @@ public class Invoice {
     private BigDecimal taxAmount;
 
     @Column(name = "currency", length = 3)
-    private String currency;
+    @Builder.Default
+    private String currency = "USD";
 
     @Column(name = "payment_terms")
     private String paymentTerms;
@@ -85,47 +86,63 @@ public class Invoice {
     @Column(name = "approved_at")
     private LocalDateTime approvedAt;
 
+    @Column(name = "rejection_reason")
+    private String rejectionReason;
+
+    @Column(name = "rejected_at")
+    private LocalDateTime rejectedAt;
+
+    /**
+     * Static factory method to create a new Invoice
+     */
     public static Invoice create(Document document) {
         return Invoice.builder()
                 .id(UUID.randomUUID().toString())
                 .document(document)
                 .status(InvoiceStatus.PENDING)
+                .amount(BigDecimal.ZERO)
                 .currency("USD")
                 .build();
     }
 
-    public void updateFromExtractedData(String invoiceNumber, LocalDate invoiceDate,
-                                        LocalDate dueDate, BigDecimal amount) {
-        this.invoiceNumber = invoiceNumber;
-        this.invoiceDate = invoiceDate;
-        this.dueDate = dueDate;
-        this.amount = amount;
-        this.status = InvoiceStatus.PROCESSED;
-    }
-
+    /**
+     * Business logic methods
+     */
     public void approve() {
-        if (status != InvoiceStatus.PROCESSED) {
-            throw new IllegalStateException("Only processed invoices can be approved");
-        }
         this.status = InvoiceStatus.APPROVED;
         this.approvedAt = LocalDateTime.now();
     }
 
-    public void reject() {
+    public void reject(String reason) {
         this.status = InvoiceStatus.REJECTED;
+        this.rejectionReason = reason;
+        this.rejectedAt = LocalDateTime.now();
     }
 
     public void addLineItem(LineItem lineItem) {
-        lineItems.add(lineItem);
+        this.lineItems.add(lineItem);
+        recalculateAmount();
     }
 
-    public BigDecimal calculateTotal() {
-        return lineItems.stream()
-                .map(LineItem::getAmount)
+    public void removeLineItem(LineItem lineItem) {
+        this.lineItems.remove(lineItem);
+        recalculateAmount();
+    }
+
+    private void recalculateAmount() {
+        this.amount = lineItems.stream()
+                .map(LineItem::getTotalPrice)
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
     }
 
-    public BigDecimal getTotalAmount() {
-        return this.amount != null ? this.amount : BigDecimal.ZERO;
+    public boolean isOverdue() {
+        return dueDate != null && LocalDate.now().isAfter(dueDate);
+    }
+
+    public BigDecimal getTotalWithTax() {
+        if (taxAmount == null) {
+            return amount;
+        }
+        return amount.add(taxAmount);
     }
 }
