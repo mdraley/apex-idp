@@ -7,6 +7,12 @@ spring:
     username: apex_user
     password: apex_password
     driver-class-name: org.postgresql.Driver
+    hikari:
+      maximum-pool-size: 10
+      minimum-idle: 5
+      connection-timeout: 30000
+      idle-timeout: 600000
+      max-lifetime: 1800000
 
   jpa:
     hibernate:
@@ -15,19 +21,32 @@ spring:
       hibernate:
         dialect: org.hibernate.dialect.PostgreSQLDialect
         format_sql: true
+        jdbc:
+          batch_size: 25
+        order_inserts: true
+        order_updates: true
     show-sql: false
+    open-in-view: false
 
   kafka:
     bootstrap-servers: localhost:9092
     producer:
       key-serializer: org.apache.kafka.common.serialization.StringSerializer
       value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
+      acks: all
+      retries: 3
+      batch-size: 16384
+      linger-ms: 1
+      buffer-memory: 33554432
     consumer:
       group-id: apex-group
       key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
       value-deserializer: org.springframework.kafka.support.serializer.JsonDeserializer
       properties:
         spring.json.trusted.packages: "com.apex.idp.*"
+      auto-offset-reset: earliest
+      enable-auto-commit: false
+      max-poll-records: 10
 
   servlet:
     multipart:
@@ -37,30 +56,165 @@ spring:
   redis:
     host: localhost
     port: 6379
+    timeout: 2000ms
+    lettuce:
+      pool:
+        max-active: 8
+        max-idle: 8
+        min-idle: 0
 
+  cache:
+    type: redis
+    redis:
+      time-to-live: 600000 # 10 minutes
+
+  security:
+    user:
+      name: admin
+      password: admin123
+
+# MinIO Configuration
 minio:
   endpoint: http://localhost:9000
   access-key: apex_admin
   secret-key: apex_password
   bucket-name: apex-documents
+  secure: false
 
+# OpenAI Configuration
 openai:
   api:
-    key: ${OPENAI_API_KEY:your-api-key}
+    key: ${OPENAI_API_KEY:your-api-key-here}
     url: https://api.openai.com/v1
+  model: gpt-3.5-turbo
+  temperature: 0.7
+  max-tokens: 2000
+  timeout: 60
+  max-content-length: 4000
+  retry:
+    max-attempts: 3
+    backoff-delay: 1000
 
+# JWT Configuration
 jwt:
-  secret: ${JWT_SECRET:your-256-bit-secret-key-for-jwt-token-generation}
+  secret: ${JWT_SECRET:your-256-bit-secret-key-for-jwt-token-generation-change-in-production}
   expiration: 86400000 # 24 hours
+  refresh-expiration: 604800000 # 7 days
+  header: Authorization
+  prefix: Bearer
 
+# OCR Configuration
+ocr:
+  confidence:
+    threshold: 0.8
+  timeout: 120
+  max-file-size: 52428800 # 50MB
+
+# Batch Processing Configuration
+batch:
+  max-file-size: 52428800 # 50MB
+  max-files: 100
+  allowed-file-types: pdf,jpg,jpeg,png,tiff
+  processing:
+    thread-pool-size: 10
+    queue-capacity: 100
+
+# Document Processing Configuration
+document:
+  processing:
+    retry-count: 3
+    retry-delay: 5000
+
+# API Rate Limiting
+api:
+  rate-limit:
+    enabled: true
+    requests-per-minute: 60
+    requests-per-hour: 1000
+
+# Logging Configuration
 logging:
   level:
     com.apex.idp: DEBUG
     org.springframework.web: INFO
+    org.springframework.security: DEBUG
     org.springframework.kafka: INFO
+    org.hibernate.SQL: DEBUG
+    org.hibernate.type: TRACE
+    com.theokanning.openai: DEBUG
   pattern:
     console: "%d{yyyy-MM-dd HH:mm:ss} - %msg%n"
+    file: "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n"
+  file:
+    name: logs/apex-idp.log
+    max-size: 10MB
+    max-history: 30
 
+# Actuator Configuration
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+      base-path: /actuator
+  endpoint:
+    health:
+      show-details: when-authorized
+  metrics:
+    export:
+      prometheus:
+        enabled: true
+
+# Server Configuration
 server:
   port: 8080
+  servlet:
+    context-path: /
+  compression:
+    enabled: true
+    mime-types: text/html,text/xml,text/plain,text/css,text/javascript,application/javascript,application/json
+    min-response-size: 1024
+  error:
+    include-message: always
+    include-binding-errors: always
+    include-stacktrace: on_param
+    include-exception: false
+
+# Swagger/OpenAPI Configuration
+springdoc:
+  api-docs:
+    path: /v3/api-docs
+  swagger-ui:
+    path: /swagger-ui.html
+    enabled: true
+    try-it-out-enabled: true
+  show-actuator: true
+
+# CORS Configuration
+cors:
+  allowed-origins:
+    - http://localhost:3000
+    - http://localhost:3001
+  allowed-methods:
+    - GET
+    - POST
+    - PUT
+    - DELETE
+    - OPTIONS
+    - PATCH
+  allowed-headers:
+    - "*"
+  exposed-headers:
+    - Authorization
+  allow-credentials: true
+  max-age: 3600
+
+# Application-specific Configuration
+app:
+  name: APEX Intelligent Document Processing
+  version: 1.0.0
+  description: AI-powered document processing for hospital accounts payable
+  contact:
+    name: APEX Support
+    email: support@apex.com
   timezone: America/Chicago
