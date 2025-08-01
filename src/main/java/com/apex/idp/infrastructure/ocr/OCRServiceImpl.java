@@ -4,9 +4,6 @@ import com.apex.idp.domain.document.Document;
 import com.apex.idp.infrastructure.storage.StorageService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
-import org.apache.pdfbox.Loader;
-import org.apache.pdfbox.pdmodel.PDDocument;
-import org.apache.pdfbox.text.PDFTextStripper;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.io.ByteArrayResource;
 import org.springframework.http.*;
@@ -23,7 +20,6 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.CompletionException;
 import java.util.stream.Collectors;
 
 /**
@@ -32,7 +28,7 @@ import java.util.stream.Collectors;
  */
 @Slf4j
 @Service
-public class OCRServiceImpl implements OCRService {
+public class OCRServiceImpl {
 
     private final RestTemplate restTemplate;
     private final StorageService storageService;

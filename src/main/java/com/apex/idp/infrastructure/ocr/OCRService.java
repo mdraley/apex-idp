@@ -103,22 +103,6 @@ public class OCRService {
 }
 
 /**
- * OCR processing result containing extracted text and metadata.
- */
-@Getter
-@Builder
-@NoArgsConstructor
-@AllArgsConstructor
-class OCRResult {
-    private String text;
-    private double confidence;
-    private String language;
-    private int pageCount;
-    private List<TextRegion> regions;
-    private Map<String, Object> metadata;
-}
-
-/**
  * Represents a region of text within a document.
  */
 @Getter

@@ -184,31 +184,3 @@ public class Batch {
         return (int) ((processedCount + failedCount) * 100.0 / documentCount);
     }
 }
-
-/**
- * Enum representing batch processing statuses
- */
-enum BatchStatus {
-    CREATED("Created"),
-    PROCESSING("Processing"),
-    OCR_COMPLETED("OCR Completed"),
-    ANALYSIS_IN_PROGRESS("Analysis In Progress"),
-    ANALYSIS_COMPLETED("Analysis Completed"),
-    ANALYSIS_FAILED("Analysis Failed"),
-    FAILED("Failed"),
-    CANCELLED("Cancelled");
-
-    private final String displayName;
-
-    BatchStatus(String displayName) {
-        this.displayName = displayName;
-    }
-
-    public String getDisplayName() {
-        return displayName;
-    }
-
-    public boolean isTerminal() {
-        return this == ANALYSIS_COMPLETED || this == FAILED || this == CANCELLED || this == ANALYSIS_FAILED;
-    }
-}

@@ -100,49 +100,109 @@ public class Invoice {
                 .id(UUID.randomUUID().toString())
                 .document(document)
                 .status(InvoiceStatus.PENDING)
-                .amount(BigDecimal.ZERO)
                 .currency("USD")
+                .lineItems(new ArrayList<>())
                 .build();
     }
 
     /**
-     * Business logic methods
+     * Business method to approve the invoice
      */
     public void approve() {
+        if (this.status != InvoiceStatus.PENDING) {
+            throw new IllegalStateException("Can only approve pending invoices");
+        }
         this.status = InvoiceStatus.APPROVED;
         this.approvedAt = LocalDateTime.now();
     }
 
+    /**
+     * Business method to reject the invoice
+     */
     public void reject(String reason) {
+        if (this.status != InvoiceStatus.PENDING) {
+            throw new IllegalStateException("Can only reject pending invoices");
+        }
         this.status = InvoiceStatus.REJECTED;
         this.rejectionReason = reason;
         this.rejectedAt = LocalDateTime.now();
     }
 
+    /**
+     * Adds a line item to the invoice
+     */
     public void addLineItem(LineItem lineItem) {
         this.lineItems.add(lineItem);
-        recalculateAmount();
+        recalculateTotal();
     }
 
+    /**
+     * Removes a line item from the invoice
+     */
     public void removeLineItem(LineItem lineItem) {
         this.lineItems.remove(lineItem);
-        recalculateAmount();
+        recalculateTotal();
     }
 
-    private void recalculateAmount() {
+    /**
+     * Recalculates the total amount based on line items
+     */
+    private void recalculateTotal() {
         this.amount = lineItems.stream()
                 .map(LineItem::getTotalPrice)
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
     }
 
+    /**
+     * Checks if the invoice is overdue
+     */
     public boolean isOverdue() {
-        return dueDate != null && LocalDate.now().isAfter(dueDate);
+        return dueDate != null && LocalDate.now().isAfter(dueDate)
+                && status != InvoiceStatus.PAID;
     }
 
-    public BigDecimal getTotalWithTax() {
-        if (taxAmount == null) {
-            return amount;
+    /**
+     * Calculates days until due date
+     */
+    public long getDaysUntilDue() {
+        if (dueDate == null) {
+            return 0;
         }
-        return amount.add(taxAmount);
+        return LocalDate.now().until(dueDate).getDays();
+    }
+
+    /**
+     * Marks the invoice as paid
+     */
+    public void markAsPaid() {
+        if (this.status != InvoiceStatus.APPROVED) {
+            throw new IllegalStateException("Can only mark approved invoices as paid");
+        }
+        this.status = InvoiceStatus.PAID;
+    }
+
+    /**
+     * Sets vendor and validates
+     */
+    public void assignVendor(Vendor vendor) {
+        if (vendor == null) {
+            throw new IllegalArgumentException("Vendor cannot be null");
+        }
+        this.vendor = vendor;
+    }
+
+    /**
+     * Validates the invoice data
+     */
+    public void validate() {
+        if (invoiceNumber == null || invoiceNumber.trim().isEmpty()) {
+            throw new IllegalStateException("Invoice number is required");
+        }
+        if (amount == null || amount.compareTo(BigDecimal.ZERO) <= 0) {
+            throw new IllegalStateException("Invoice amount must be positive");
+        }
+        if (document == null) {
+            throw new IllegalStateException("Invoice must be associated with a document");
+        }
     }
 }
