@@ -1,5 +1,52 @@
 package com.apex.idp.infrastructure.ocr;
+package com.apex.idp.infrastructure.ocr;
 
+import java.io.InputStream;
+
+/**
+ * Interface for OCR (Optical Character Recognition) operations.
+ */
+public interface OCRService {
+
+    /**
+     * Performs OCR on the provided input stream.
+     *
+     * @param inputStream The file content as an input stream
+     * @param contentType The content type of the file (e.g., "application/pdf", "image/jpeg")
+     * @return The OCR result containing extracted text and confidence score
+     * @throws Exception If OCR operation fails
+     */
+    OCRResult performOCR(InputStream inputStream, String contentType) throws Exception;
+
+    /**
+     * Performs OCR on a specific page of a multi-page document.
+     *
+     * @param inputStream The file content as an input stream
+     * @param contentType The content type of the file
+     * @param pageNumber The page number to process (0-based)
+     * @return The OCR result for the specified page
+     * @throws Exception If OCR operation fails
+     */
+    OCRResult performOCROnPage(InputStream inputStream, String contentType, int pageNumber) throws Exception;
+
+    /**
+     * Gets the number of pages in a document.
+     *
+     * @param inputStream The file content as an input stream
+     * @param contentType The content type of the file
+     * @return The number of pages in the document
+     * @throws Exception If the operation fails
+     */
+    int getPageCount(InputStream inputStream, String contentType) throws Exception;
+
+    /**
+     * Checks if OCR is supported for the given content type.
+     *
+     * @param contentType The content type to check
+     * @return true if OCR is supported, false otherwise
+     */
+    boolean isOCRSupported(String contentType);
+}
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Getter;

@@ -47,7 +47,7 @@ public class InvoiceApplicationService {
                 invoice.approve();
                 break;
             case REJECTED:
-                invoice.reject();
+                invoice.reject("reject reason");
                 break;
             default:
                 // For other statuses, we might need to add more methods to Invoice entity
@@ -70,7 +70,7 @@ public class InvoiceApplicationService {
     public InvoiceDTO rejectInvoice(String id) {
         Invoice invoice = invoiceRepository.findById(id)
                 .orElseThrow(() -> new RuntimeException("Invoice not found"));
-        invoice.reject();
+        invoice.reject("reject reason");
         Invoice savedInvoice = invoiceRepository.save(invoice);
         return InvoiceDTO.from(savedInvoice);
     }

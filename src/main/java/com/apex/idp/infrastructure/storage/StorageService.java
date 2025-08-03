@@ -30,7 +30,60 @@ public interface StorageService {
      * @throws StorageException if storage fails
      */
     String storeWithPath(MultipartFile file, String path) throws StorageException;
+package com.apex.idp.infrastructure.storage;
 
+import java.io.IOException;
+import java.io.InputStream;
+
+/**
+ * Interface for storage operations like storing and retrieving files.
+ */
+public interface StorageService {
+
+    /**
+     * Stores a file from an input stream.
+     *
+     * @param inputStream The file content as an input stream
+     * @param path The path where the file should be stored
+     * @return The final path where the file was stored
+     * @throws IOException If storage operation fails
+     */
+    String store(InputStream inputStream, String path) throws IOException;
+
+    /**
+     * Retrieves a file as an input stream.
+     *
+     * @param path The path of the file to retrieve
+     * @return The file content as an input stream
+     * @throws IOException If retrieval operation fails
+     */
+    InputStream retrieve(String path) throws IOException;
+
+    /**
+     * Deletes a file from storage.
+     *
+     * @param path The path of the file to delete
+     * @return true if successful, false otherwise
+     */
+    boolean delete(String path);
+
+    /**
+     * Checks if a file exists.
+     *
+     * @param path The path to check
+     * @return true if the file exists, false otherwise
+     */
+    boolean exists(String path);
+
+    /**
+     * Generates a URL for accessing the file.
+     *
+     * @param path The path of the file
+     * @param expirationSeconds Time in seconds until the URL expires
+     * @return The URL for accessing the file
+     */
+    String generateUrl(String path, int expirationSeconds);
+}
     /**
      * Retrieves a file as an input stream.
      *

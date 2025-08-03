@@ -10,24 +10,28 @@ import org.hibernate.annotations.UpdateTimestamp;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 
+/**
+ * Entity representing an invoice in the system.
+ */
 @Entity
 @Table(name = "invoices")
-@Getter
-@Setter
+@Data
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 @AllArgsConstructor
 @Builder
 public class Invoice {
 
     @Id
+    @Column(length = 36)
     private String id;
 
     @OneToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "document_id", nullable = false)
+    @JoinColumn(name = "document_id", nullable = false, unique = true)
     private Document document;
 
     @ManyToOne(fetch = FetchType.LAZY)
@@ -46,27 +50,6 @@ public class Invoice {
     @Column(precision = 10, scale = 2, nullable = false)
     private BigDecimal amount;
 
-    @Column(columnDefinition = "TEXT")
-    private String description;
-
-    @Enumerated(EnumType.STRING)
-    @Column(nullable = false)
-    private InvoiceStatus status;
-
-    @ElementCollection
-    @CollectionTable(name = "invoice_line_items", joinColumns = @JoinColumn(name = "invoice_id"))
-    @Builder.Default
-    private List<LineItem> lineItems = new ArrayList<>();
-
-    @CreationTimestamp
-    @Column(name = "created_at", nullable = false, updatable = false)
-    private LocalDateTime createdAt;
-
-    @UpdateTimestamp
-    @Column(name = "updated_at")
-    private LocalDateTime updatedAt;
-
-    // Additional fields
     @Column(name = "tax_amount", precision = 10, scale = 2)
     private BigDecimal taxAmount;
 
@@ -74,11 +57,26 @@ public class Invoice {
     @Builder.Default
     private String currency = "USD";
 
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false)
+    private InvoiceStatus status;
+
+    @Column(name = "payment_date")
+    private LocalDate paymentDate;
+
+    @Column(name = "payment_reference")
+    private String paymentReference;
+
     @Column(name = "payment_terms")
     private String paymentTerms;
 
     @Column(columnDefinition = "TEXT")
     private String notes;
+
+    @ElementCollection(fetch = FetchType.LAZY)
+    @CollectionTable(name = "invoice_line_items", joinColumns = @JoinColumn(name = "invoice_id"))
+    @Builder.Default
+    private List<LineItem> lineItems = new ArrayList<>();
 
     @Column(name = "approved_by")
     private String approvedBy;
@@ -92,117 +90,142 @@ public class Invoice {
     @Column(name = "rejected_at")
     private LocalDateTime rejectedAt;
 
+    @CreationTimestamp
+    @Column(name = "created_at", nullable = false, updatable = false)
+    private LocalDateTime createdAt;
+
+    @UpdateTimestamp
+    @Column(name = "updated_at")
+    private LocalDateTime updatedAt;
+
     /**
-     * Static factory method to create a new Invoice
+     * Factory method to create an invoice.
      */
     public static Invoice create(Document document) {
         return Invoice.builder()
                 .id(UUID.randomUUID().toString())
                 .document(document)
-                .status(InvoiceStatus.PENDING)
+                .status(InvoiceStatus.DRAFT)
                 .currency("USD")
                 .lineItems(new ArrayList<>())
                 .build();
     }
 
     /**
-     * Business method to approve the invoice
+     * Approves the invoice.
      */
-    public void approve() {
-        if (this.status != InvoiceStatus.PENDING) {
-            throw new IllegalStateException("Can only approve pending invoices");
-        }
+    public void approve(String approvedBy) {
+        validateStatusTransition(InvoiceStatus.DRAFT, "approve");
+        validateNotEmpty(approvedBy, "Approved by is required");
+
         this.status = InvoiceStatus.APPROVED;
+        this.approvedBy = approvedBy;
         this.approvedAt = LocalDateTime.now();
     }
 
     /**
-     * Business method to reject the invoice
+     * Rejects the invoice.
      */
     public void reject(String reason) {
-        if (this.status != InvoiceStatus.PENDING) {
-            throw new IllegalStateException("Can only reject pending invoices");
-        }
+        validateStatusTransition(InvoiceStatus.DRAFT, "reject");
+        validateNotEmpty(reason, "Rejection reason is required");
+
         this.status = InvoiceStatus.REJECTED;
         this.rejectionReason = reason;
         this.rejectedAt = LocalDateTime.now();
+        addNote("Rejected: " + reason);
     }
 
     /**
-     * Adds a line item to the invoice
+     * Marks the invoice as paid.
      */
-    public void addLineItem(LineItem lineItem) {
-        this.lineItems.add(lineItem);
-        recalculateTotal();
+    public void markAsPaid(LocalDate paymentDate, String reference) {
+        validateStatusTransition(InvoiceStatus.APPROVED, "mark as paid");
+
+        this.status = InvoiceStatus.PAID;
+        this.paymentDate = paymentDate != null ? paymentDate : LocalDate.now();
+        this.paymentReference = reference;
     }
 
     /**
-     * Removes a line item from the invoice
+     * Marks the invoice as in review.
      */
-    public void removeLineItem(LineItem lineItem) {
-        this.lineItems.remove(lineItem);
-        recalculateTotal();
+    public void markAsInReview() {
+        this.status = InvoiceStatus.IN_REVIEW;
     }
 
     /**
-     * Recalculates the total amount based on line items
+     * Adds a note to the invoice.
      */
-    private void recalculateTotal() {
-        this.amount = lineItems.stream()
-                .map(LineItem::getTotalPrice)
-                .reduce(BigDecimal.ZERO, BigDecimal::add);
+    public void addNote(String note) {
+        validateNotEmpty(note, "Note cannot be empty");
+
+        this.notes = this.notes == null ? note : this.notes + "\n" + note;
     }
 
     /**
-     * Checks if the invoice is overdue
+     * Calculates days until due.
+     */
+    public Integer getDaysUntilDue() {
+        if (this.dueDate == null) {
+            return null;
+        }
+
+        LocalDate today = LocalDate.now();
+        return (int) ChronoUnit.DAYS.between(today, this.dueDate);
+    }
+
+    /**
+     * Checks if invoice is overdue.
      */
     public boolean isOverdue() {
-        return dueDate != null && LocalDate.now().isAfter(dueDate)
-                && status != InvoiceStatus.PAID;
+        return this.dueDate != null
+                && this.status != InvoiceStatus.PAID
+                && LocalDate.now().isAfter(this.dueDate);
     }
 
     /**
-     * Calculates days until due date
+     * Adds a line item to the invoice.
      */
-    public long getDaysUntilDue() {
-        if (dueDate == null) {
-            return 0;
+    public void addLineItem(LineItem lineItem) {
+        if (lineItem != null) {
+            this.lineItems.add(lineItem);
+            recalculateTotal();
         }
-        return LocalDate.now().until(dueDate).getDays();
     }
 
     /**
-     * Marks the invoice as paid
+     * Removes a line item from the invoice.
      */
-    public void markAsPaid() {
-        if (this.status != InvoiceStatus.APPROVED) {
-            throw new IllegalStateException("Can only mark approved invoices as paid");
+    public void removeLineItem(LineItem lineItem) {
+        if (this.lineItems.remove(lineItem)) {
+            recalculateTotal();
         }
-        this.status = InvoiceStatus.PAID;
     }
 
-    /**
-     * Sets vendor and validates
-     */
-    public void assignVendor(Vendor vendor) {
-        if (vendor == null) {
-            throw new IllegalArgumentException("Vendor cannot be null");
-        }
-        this.vendor = vendor;
+    private void recalculateTotal() {
+        BigDecimal lineItemsTotal = lineItems.stream()
+                .map(LineItem::getTotalPrice)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+
+        BigDecimal tax = taxAmount != null ? taxAmount : BigDecimal.ZERO;
+        this.amount = lineItemsTotal.add(tax);
     }
 
-    /**
-     * Validates the invoice data
-     */
-    public void validate() {
-        if (invoiceNumber == null || invoiceNumber.trim().isEmpty()) {
-            throw new IllegalStateException("Invoice number is required");
+    private void validateStatusTransition(InvoiceStatus expectedStatus, String operation) {
+        if (this.status == null) {
+            throw new IllegalStateException("Invoice status cannot be null");
         }
-        if (amount == null || amount.compareTo(BigDecimal.ZERO) <= 0) {
-            throw new IllegalStateException("Invoice amount must be positive");
+        if (this.status != expectedStatus) {
+            throw new IllegalStateException(
+                    String.format("Can only %s invoices with status %s, current status: %s",
+                            operation, expectedStatus, this.status));
         }
-        if (document == null) {
-            throw new IllegalStateException("Invoice must be associated with a document");
+    }
+
+    private void validateNotEmpty(String value, String message) {
+        if (value == null || value.trim().isEmpty()) {
+            throw new IllegalArgumentException(message);
         }
     }
 }

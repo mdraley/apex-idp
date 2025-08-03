@@ -50,7 +50,7 @@ public class AnalysisService {
             OpenAIService.AnalysisResult result = openAIService.analyzeBatch(documents);
 
             // Create and save analysis
-            Analysis analysis = Analysis.create(batch, result.getSummary(), result.getRecommendations());
+            Analysis analysis = Analysis.create(batch, result.getSummary(), String.join("\n", result.getRecommendations()));
             analysis.setMetadata(result.getMetadata());
 
             Analysis savedAnalysis = analysisRepository.save(analysis);
@@ -65,6 +65,11 @@ public class AnalysisService {
             log.info("Batch analysis completed for: {}", batchId);
             return savedAnalysis;
 
+        } catch (OpenAIService.AIServiceException e) {
+            log.error("AI service error analyzing batch: {}", batchId, e);
+            batch.failAnalysis("AI analysis failed: " + e.getMessage());
+            batchRepository.save(batch);
+            throw new RuntimeException("AI service failed to analyze batch", e);
         } catch (Exception e) {
             log.error("Error analyzing batch: {}", batchId, e);
             batch.failAnalysis(e.getMessage());
@@ -92,7 +97,7 @@ public class AnalysisService {
             // Build context for AI
             String contextString = buildContext(batch, request.getInvoiceId());
 
-            // FIX: Create proper ChatContext object
+            // Create proper ChatContext object
             Long batchIdLong = null;
             try {
                 batchIdLong = Long.parseLong(batchId);
@@ -114,37 +119,43 @@ public class AnalysisService {
             additionalContext.put("batchIdStr", batchId);
             additionalContext.put("invoiceIdStr", request.getInvoiceId());
 
-            OpenAIService.ChatContext chatContext = new OpenAIService.ChatContext(
+            // Using the correctly imported OpenAIService.ChatContext
+            var chatContext = openAIService.createChatContext(
                     invoiceIdLong,  // documentId (using invoiceId as proxy)
                     batchIdLong,    // batchId
-                    additionalContext
+                    additionalContext,
+                    null            // userId (not provided in this context)
             );
 
-            // Generate AI response
-            // Create conversation history list - the third parameter should be List<ChatMessage>, not Map
-            List<OpenAIService.ChatMessage> conversationHistory = List.of(
-                new OpenAIService.ChatMessage(
-                    "user", 
-                    request.getMessage(), 
-                    System.currentTimeMillis()
-                )
+            // Create conversation history list using the service to create chat messages
+            var conversationHistory = openAIService.createChatHistory(
+                "user",
+                request.getMessage(),
+                System.currentTimeMillis()
             );
 
-            OpenAIService.ChatResponse aiResponse = openAIService.chat(
+            var aiResponse = openAIService.chat(
                     request.getMessage(),
                     chatContext,
                     conversationHistory
             );
 
             // Build response DTO
+            List<ChatResponseDTO.DocumentReferenceDTO> refs = aiResponse.getReferences().stream()
+                    .map(ChatResponseDTO.DocumentReferenceDTO::from)
+                    .collect(Collectors.toList());
+
             return ChatResponseDTO.builder()
                     .batchId(batchId)
                     .message(request.getMessage())
                     .response(aiResponse.getMessage())
-                    .references(aiResponse.getReferences())
+                    .references(refs)
                     .metadata(aiResponse.getMetadata())
                     .build();
 
+        } catch (OpenAIService.AIServiceException e) {
+            log.error("AI service error processing chat for batch: {}", batchId, e);
+            return ChatResponseDTO.error("AI processing error: " + e.getMessage());
         } catch (Exception e) {
             log.error("Error processing chat for batch: {}", batchId, e);
             throw new RuntimeException("Failed to process chat request", e);

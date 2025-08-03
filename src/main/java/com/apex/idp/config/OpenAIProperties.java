@@ -1,10 +1,9 @@
 package com.apex.idp.config;
-
 import lombok.Data;
 import org.springframework.boot.context.properties.ConfigurationProperties;
-import org.springframework.context.annotation.Configuration;
 import org.springframework.validation.annotation.Validated;
-
+import jakarta.validation.constraints.DecimalMax;
+import jakarta.validation.constraints.DecimalMin;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
@@ -15,51 +14,49 @@ import jakarta.validation.constraints.NotNull;
  * Provides type-safe configuration with validation.
  */
 @Data
-@Configuration
 @ConfigurationProperties(prefix = "openai")
 @Validated
 public class OpenAIProperties {
-
     /**
      * API configuration
      */
     @NotNull
     private Api api = new Api();
-
+    
     /**
      * Model to use for completions
      */
     @NotBlank
     private String model = "gpt-3.5-turbo";
-
+    
     /**
      * Temperature for response generation (0.0 - 2.0)
      */
-    @Min(0)
-    @Max(2)
+    @DecimalMin("0.0")
+    @DecimalMax("2.0")
     private double temperature = 0.7;
-
+    
     /**
      * Maximum tokens in response
      */
     @Min(1)
-    @Max(4096)
+    @Max(8192)  // Increased to accommodate different models
     private int maxTokens = 2000;
-
+    
     /**
      * Request timeout in seconds
      */
     @Min(10)
     @Max(300)
     private int timeout = 60;
-
+    
     /**
      * Maximum content length before truncation
      */
     @Min(100)
     @Max(10000)
     private int maxContentLength = 4000;
-
+    
     /**
      * Retry configuration
      */
@@ -73,7 +70,7 @@ public class OpenAIProperties {
          */
         @NotBlank
         private String key;
-
+        
         /**
          * OpenAI API base URL
          */
@@ -89,21 +86,21 @@ public class OpenAIProperties {
         @Min(0)
         @Max(5)
         private int maxAttempts = 3;
-
+        
         /**
          * Initial backoff delay in milliseconds
          */
         @Min(100)
         @Max(5000)
         private long backoffDelay = 1000;
-
+        
         /**
          * Backoff multiplier for exponential backoff
          */
-        @Min(1.0)
-        @Max(3.0)
+        @DecimalMin("1.0")
+        @DecimalMax("3.0")
         private double backoffMultiplier = 2.0;
-
+        
         /**
          * Maximum backoff delay in milliseconds
          */
@@ -117,13 +114,19 @@ public class OpenAIProperties {
      */
     @Data
     public static class ModelConfig {
+        @NotBlank
         private String name;
+        
+        @Min(1)
         private int contextWindow;
+        
+        @DecimalMin("0.0")
         private double costPer1kTokens;
     }
 
     /**
      * Get model configuration for cost tracking
+     * Consider moving this to external configuration for easier maintenance
      */
     public ModelConfig getModelConfig() {
         ModelConfig config = new ModelConfig();

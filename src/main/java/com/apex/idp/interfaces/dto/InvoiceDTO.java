@@ -9,6 +9,7 @@ import java.util.Collections;
 import java.util.List;
 import java.util.stream.Collectors;
 
+@Data
 @Getter
 @Setter
 @Builder
@@ -66,6 +67,9 @@ public class InvoiceDTO {
                 .currency(invoice.getCurrency() != null ? invoice.getCurrency() : "USD")
                 .paymentTerms(invoice.getPaymentTerms())
                 .description(invoice.getDescription())
+                .overdue(invoice.isOverdue())
+                .totalWithTax(invoice.getTaxAmount() != null ? invoice.getAmount().add(invoice.getTaxAmount()) : invoice.getAmount())
+                .imageUrl(invoice.getDocument().getFilePath())
                 .build();
     }
 

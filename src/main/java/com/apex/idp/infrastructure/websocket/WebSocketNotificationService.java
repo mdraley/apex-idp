@@ -1,8 +1,91 @@
 package com.apex.idp.infrastructure.websocket;
+package com.apex.idp.infrastructure.websocket;
 
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.messaging.simp.SimpMessagingTemplate;
+import org.springframework.stereotype.Service;
+
+import java.util.HashMap;
+import java.util.Map;
+
+/**
+ * Service for sending real-time notifications via WebSocket.
+ */
+@Slf4j
+@Service
+@RequiredArgsConstructor
+public class WebSocketNotificationService {
+
+    private final SimpMessagingTemplate messagingTemplate;
+
+    /**
+     * Notifies clients about batch status updates.
+     */
+    public void notifyBatchStatusUpdate(String batchId, String status) {
+        log.debug("Sending batch status update: {} -> {}", batchId, status);
+
+        Map<String, Object> notification = new HashMap<>();
+        notification.put("type", "BATCH_STATUS_UPDATE");
+        notification.put("batchId", batchId);
+        notification.put("status", status);
+        notification.put("timestamp", System.currentTimeMillis());
+
+        // Send to batch-specific topic
+        messagingTemplate.convertAndSend("/topic/batch/" + batchId, notification);
+
+        // Also send to general updates topic
+        messagingTemplate.convertAndSend("/topic/updates", notification);
+    }
+
+    /**
+     * Notifies clients about document processing updates.
+     */
+    public void notifyDocumentUpdate(String documentId, String status, Map<String, Object> metadata) {
+        log.debug("Sending document update: {} -> {}", documentId, status);
+
+        Map<String, Object> notification = new HashMap<>();
+        notification.put("type", "DOCUMENT_UPDATE");
+        notification.put("documentId", documentId);
+        notification.put("status", status);
+        notification.put("metadata", metadata);
+        notification.put("timestamp", System.currentTimeMillis());
+
+        // Send to document-specific topic
+        messagingTemplate.convertAndSend("/topic/document/" + documentId, notification);
+    }
+
+    /**
+     * Notifies clients about new analysis results.
+     */
+    public void notifyAnalysisComplete(String batchId, String analysisId) {
+        log.debug("Sending analysis complete notification: {}", analysisId);
+
+        Map<String, Object> notification = new HashMap<>();
+        notification.put("type", "ANALYSIS_COMPLETE");
+        notification.put("batchId", batchId);
+        notification.put("analysisId", analysisId);
+        notification.put("timestamp", System.currentTimeMillis());
+
+        messagingTemplate.convertAndSend("/topic/batch/" + batchId + "/analysis", notification);
+    }
+
+    /**
+     * Notifies a specific user about events relevant to them.
+     */
+    public void notifyUser(String userId, String type, Map<String, Object> payload) {
+        log.debug("Sending user notification to {}: {}", userId, type);
+
+        Map<String, Object> notification = new HashMap<>(payload);
+        notification.put("type", type);
+        notification.put("timestamp", System.currentTimeMillis());
+
+        messagingTemplate.convertAndSend("/topic/user/" + userId, notification);
+    }
+}
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;  // FIX: Added missing @Slf4j annotation
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.stereotype.Service;
 
@@ -14,7 +97,7 @@ import java.util.Map;
  * Service for sending real-time notifications via WebSocket.
  * Handles batch processing status updates, document events, and error notifications.
  */
-@Slf4j  // FIX: Added annotation to generate log field
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class WebSocketNotificationService {
@@ -190,7 +273,6 @@ public class WebSocketNotificationService {
 
         sendNotification("/topic/batches/" + batchId, notification);
     }
-
     /**
      * Sends system status notification.
      */
@@ -215,6 +297,21 @@ public class WebSocketNotificationService {
             log.trace("Notification sent to {}: {}", destination, notification);
         } catch (Exception e) {
             log.error("Failed to send notification to {}: {}", destination, e.getMessage(), e);
+        }
+    }
+
+    /**
+     * Sends a custom notification to subscribers of a specific topic.
+     *
+     * @param topic The topic to publish to
+     * @param payload The notification payload
+     */
+    public void sendNotification(String topic, Object payload) {
+        try {
+            messagingTemplate.convertAndSend(topic, payload);
+            log.trace("Notification sent to {}", topic);
+        } catch (Exception e) {
+            log.error("Failed to send notification to {}: {}", topic, e.getMessage(), e);
         }
     }
 

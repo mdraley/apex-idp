@@ -18,13 +18,11 @@ import java.util.UUID;
  */
 @Entity
 @Table(name = "batches")
-@Getter
-@Setter
+@Data
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 @AllArgsConstructor
 @Builder
 public class Batch {
-
     @Id
     private String id;
 
@@ -34,18 +32,12 @@ public class Batch {
     @Column(columnDefinition = "TEXT")
     private String description;
 
+    @Column(name = "source_type")
+    private String sourceType;
+
     @Enumerated(EnumType.STRING)
     @Column(nullable = false)
     private BatchStatus status;
-
-    @Column(name = "document_count")
-    private int documentCount;
-
-    @Column(name = "processed_count")
-    private int processedCount;
-
-    @Column(name = "failed_count")
-    private int failedCount;
 
     @OneToMany(mappedBy = "batch", cascade = CascadeType.ALL, fetch = FetchType.LAZY)
     @Builder.Default
@@ -53,6 +45,12 @@ public class Batch {
 
     @Column(name = "created_by")
     private String createdBy;
+
+    @Column(name = "processed_by")
+    private String processedBy;
+
+    @Column(name = "error_message")
+    private String errorMessage;
 
     @CreationTimestamp
     @Column(name = "created_at", nullable = false, updatable = false)
@@ -68,52 +66,53 @@ public class Batch {
     @Column(name = "completed_at")
     private LocalDateTime completedAt;
 
-    @Column(name = "error_message")
-    private String errorMessage;
-
     /**
-     * Static factory method to create a new batch
+     * Factory method to create a new batch.
      */
-    public static Batch create(String name, String description, String createdBy) {
+    public static Batch create(String name, String description, String sourceType, String createdBy) {
         return Batch.builder()
                 .id(UUID.randomUUID().toString())
                 .name(name)
                 .description(description)
+                .sourceType(sourceType)
                 .status(BatchStatus.CREATED)
-                .documentCount(0)
-                .processedCount(0)
-                .failedCount(0)
                 .createdBy(createdBy)
                 .build();
     }
 
     /**
-     * Adds a document to the batch
+     * Adds a document to the batch.
      */
     public void addDocument(Document document) {
-        documents.add(document);
+        this.documents.add(document);
         document.setBatch(this);
-        documentCount++;
     }
 
     /**
-     * Starts batch processing
+     * Starts processing the batch.
      */
-    public void startProcessing() {
+    public void startProcessing(String processedBy) {
         this.status = BatchStatus.PROCESSING;
+        this.processedBy = processedBy;
         this.startedAt = LocalDateTime.now();
     }
 
     /**
-     * Marks OCR as completed for the batch
+     * Marks OCR processing as complete.
      */
     public void completeOCR() {
         this.status = BatchStatus.OCR_COMPLETED;
-        updateProcessingCounts();
     }
 
     /**
-     * Completes analysis for the batch
+     * Marks data extraction as complete.
+     */
+    public void completeExtraction() {
+        this.status = BatchStatus.EXTRACTION_COMPLETED;
+    }
+
+    /**
+     * Completes analysis for the batch.
      */
     public void completeAnalysis() {
         this.status = BatchStatus.ANALYSIS_COMPLETED;
@@ -121,66 +120,80 @@ public class Batch {
     }
 
     /**
-     * Marks the batch as failed
+     * Completes the batch processing.
      */
-    public void failProcessing(String errorMessage) {
+    public void complete() {
+        this.status = BatchStatus.COMPLETED;
+        this.completedAt = LocalDateTime.now();
+    }
+
+    /**
+     * Fails the batch processing.
+     */
+    public void fail(String errorMessage) {
         this.status = BatchStatus.FAILED;
         this.errorMessage = errorMessage;
         this.completedAt = LocalDateTime.now();
     }
 
     /**
-     * Fails analysis with error message
+     * Gets batch statistics for this batch.
      */
-    public void failAnalysis(String errorMessage) {
-        this.status = BatchStatus.ANALYSIS_FAILED;
-        this.errorMessage = errorMessage;
+    public BatchStatistics getStatistics() {
+        return new BatchStatistics(this.documents);
     }
 
     /**
-     * Updates processing counts based on document statuses
+     * Extracted class to handle batch statistics calculations.
      */
-    public void updateProcessingCounts() {
-        this.processedCount = (int) documents.stream()
-                .filter(doc -> doc.getStatus() == DocumentStatus.PROCESSED)
-                .count();
+    public static class BatchStatistics {
+        private final List<Document> documents;
 
-        this.failedCount = (int) documents.stream()
-                .filter(doc -> doc.getStatus() == DocumentStatus.FAILED)
-                .count();
-    }
+        public BatchStatistics(List<Document> documents) {
+            this.documents = documents;
+        }
 
-    /**
-     * Gets the number of processed documents
-     */
-    public int getProcessedDocumentCount() {
-        return (int) documents.stream()
-                .filter(doc -> doc.getStatus() == DocumentStatus.PROCESSED)
-                .count();
-    }
+        /**
+         * Gets the document count in this batch.
+         */
+        public int getDocumentCount() {
+            return this.documents.size();
+        }
 
-    /**
-     * Gets the number of failed documents
-     */
-    public int getFailedDocumentCount() {
-        return (int) documents.stream()
-                .filter(doc -> doc.getStatus() == DocumentStatus.FAILED)
-                .count();
-    }
+        /**
+         * Gets the number of processed documents.
+         */
+        public int getProcessedDocumentCount() {
+            return (int) documents.stream()
+                    .filter(doc -> doc.getStatus() == DocumentStatus.PROCESSED)
+                    .count();
+        }
 
-    /**
-     * Checks if all documents are processed
-     */
-    public boolean areAllDocumentsProcessed() {
-        return documents.stream()
-                .allMatch(doc -> doc.getStatus().isTerminal());
-    }
+        /**
+         * Gets the number of failed documents.
+         */
+        public int getFailedDocumentCount() {
+            return (int) documents.stream()
+                    .filter(doc -> doc.getStatus() == DocumentStatus.FAILED)
+                    .count();
+        }
 
-    /**
-     * Gets processing progress as percentage
-     */
-    public int getProgressPercentage() {
-        if (documentCount == 0) return 0;
-        return (int) ((processedCount + failedCount) * 100.0 / documentCount);
+        /**
+         * Checks if all documents are processed.
+         */
+        public boolean areAllDocumentsProcessed() {
+            return documents.stream()
+                    .allMatch(Document::isTerminal);
+        }
+
+        /**
+         * Gets processing progress as percentage.
+         */
+        public int getProgressPercentage() {
+            int totalDocuments = getDocumentCount();
+            if (totalDocuments == 0) return 0;
+            int completedDocuments = getProcessedDocumentCount() + getFailedDocumentCount();
+            return (int) (completedDocuments * 100.0 / totalDocuments);
+        }
     }
 }

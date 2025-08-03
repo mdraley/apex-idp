@@ -14,6 +14,7 @@ import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
+import java.util.List;
 import java.util.Optional;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -244,7 +245,7 @@ public class InvoiceExtractionService {
 
         // Try fuzzy match
         List<Vendor> similarVendors = vendorRepository.findByNameContainingIgnoreCase(vendorName);
-        if (!similarVendors.isEmpty()) {
+        if (similarVendors != null && !similarVendors.isEmpty()) {
             // Return the first match (in production, implement better fuzzy matching)
             return similarVendors.get(0);
         }

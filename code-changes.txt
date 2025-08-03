@@ -1,0 +1,38 @@
+On branch main
+Your branch is up to date with 'origin/main'.
+
+Changes to be committed:
+  (use "git restore --staged <file>..." to unstage)
+	new file:   src/main/java/com/apex/idp/infrastructure/ocr/BatchOCRResult.java
+	new file:   src/main/java/com/apex/idp/infrastructure/ocr/DocumentOCRResult.java
+	new file:   src/main/java/com/apex/idp/infrastructure/ocr/LayoutOCRResult.java
+	new file:   src/main/java/com/apex/idp/infrastructure/ocr/LayoutOptions.java
+	new file:   src/main/java/com/apex/idp/infrastructure/ocr/OCRException.java
+	new file:   src/main/java/com/apex/idp/infrastructure/ocr/OCRResult.java
+	new file:   src/main/java/com/apex/idp/infrastructure/ocr/PreprocessingOptions.java
+	new file:   src/main/java/com/apex/idp/infrastructure/ocr/ValidationResult.java
+
+Changes not staged for commit:
+  (use "git add <file>..." to update what will be committed)
+  (use "git restore <file>..." to discard changes in working directory)
+	modified:   src/main/java/com/apex/idp/application/service/AnalysisService.java
+	modified:   src/main/java/com/apex/idp/domain/batch/Batch.java
+	modified:   src/main/java/com/apex/idp/domain/batch/BatchStatus.java
+	modified:   src/main/java/com/apex/idp/domain/invoice/Invoice.java
+	modified:   src/main/java/com/apex/idp/infrastructure/ocr/BatchOCRResult.java
+	modified:   src/main/java/com/apex/idp/infrastructure/ocr/DocumentOCRResult.java
+	modified:   src/main/java/com/apex/idp/infrastructure/ocr/LayoutOCRResult.java
+	modified:   src/main/java/com/apex/idp/infrastructure/ocr/LayoutOptions.java
+	modified:   src/main/java/com/apex/idp/infrastructure/ocr/OCRException.java
+	modified:   src/main/java/com/apex/idp/infrastructure/ocr/OCRResult.java
+	modified:   src/main/java/com/apex/idp/infrastructure/ocr/OCRService.java
+	modified:   src/main/java/com/apex/idp/infrastructure/ocr/OCRServiceImpl.java
+	modified:   src/main/java/com/apex/idp/infrastructure/ocr/PreprocessingOptions.java
+	modified:   src/main/java/com/apex/idp/infrastructure/ocr/ValidationResult.java
+	modified:   src/main/java/com/apex/idp/interfaces/dto/ChatResponseDTO.java
+	modified:   src/main/resources/application.yml
+
+Untracked files:
+  (use "git add <file>..." to include in what will be committed)
+	status.txt
+

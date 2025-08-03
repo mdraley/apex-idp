@@ -1,5 +1,77 @@
 package com.apex.idp.infrastructure.kafka;
+package com.apex.idp.infrastructure.kafka;
 
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.kafka.core.KafkaTemplate;
+import org.springframework.stereotype.Component;
+
+/**
+ * Kafka producer for batch processing events.
+ * Sends notifications when batch processing states change.
+ */
+@Slf4j
+@Component
+@RequiredArgsConstructor
+public class BatchEventProducer {
+
+    private final KafkaTemplate<String, BatchEvent> kafkaTemplate;
+
+    private static final String BATCH_OCR_TOPIC = "apex-idp-batch-ocr-completed";
+    private static final String BATCH_EXTRACTION_TOPIC = "apex-idp-batch-extraction-completed";
+    private static final String BATCH_COMPLETED_TOPIC = "apex-idp-batch-completed";
+    private static final String BATCH_FAILED_TOPIC = "apex-idp-batch-failed";
+
+    /**
+     * Sends event when batch OCR is completed.
+     */
+    public void sendBatchOCRCompletedEvent(String batchId) {
+        sendBatchEvent(BATCH_OCR_TOPIC, batchId, "OCR_COMPLETED");
+    }
+
+    /**
+     * Sends event when batch extraction is completed.
+     */
+    public void sendBatchExtractionCompletedEvent(String batchId) {
+        sendBatchEvent(BATCH_EXTRACTION_TOPIC, batchId, "EXTRACTION_COMPLETED");
+    }
+
+    /**
+     * Sends event when batch is fully completed.
+     */
+    public void sendBatchCompletedEvent(String batchId) {
+        sendBatchEvent(BATCH_COMPLETED_TOPIC, batchId, "COMPLETED");
+    }
+
+    /**
+     * Sends event when batch processing fails.
+     */
+    public void sendBatchFailedEvent(String batchId, String errorMessage) {
+        BatchEvent event = BatchEvent.builder()
+                .batchId(batchId)
+                .status("FAILED")
+                .timestamp(System.currentTimeMillis())
+                .details(errorMessage)
+                .build();
+
+        kafkaTemplate.send(BATCH_FAILED_TOPIC, batchId, event);
+        log.info("Sent batch failed event for batch {}", batchId);
+    }
+
+    /**
+     * Helper method to send batch events.
+     */
+    private void sendBatchEvent(String topic, String batchId, String status) {
+        BatchEvent event = BatchEvent.builder()
+                .batchId(batchId)
+                .status(status)
+                .timestamp(System.currentTimeMillis())
+                .build();
+
+        kafkaTemplate.send(topic, batchId, event);
+        log.info("Sent {} event for batch {}", status, batchId);
+    }
+}
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;

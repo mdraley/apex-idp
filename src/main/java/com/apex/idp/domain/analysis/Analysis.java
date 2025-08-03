@@ -13,8 +13,7 @@ import java.util.UUID;
 
 @Entity
 @Table(name = "analyses")
-@Getter
-@Setter
+@Data
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 @AllArgsConstructor
 @Builder
